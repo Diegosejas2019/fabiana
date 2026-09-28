@@ -253,10 +253,7 @@ def build_recent_reply(sources, show_text):
     text = clean_source_text(latest.get("text", ""))
 
     if show_text and text:
-        return (
-            f"Lo ultimo que encuentro es del {latest['localDate']} a las {latest['localTime']}. "
-            f"{speaker} te puso: \"{shorten(text, 220)}\"."
-        )
+        return build_latest_message_sentence(latest, speaker, text)
 
     return (
         f"Lo ultimo que encuentro esta fechado el {latest['localDate']} a las {latest['localTime']}. "
@@ -270,6 +267,13 @@ def display_speaker(source):
     if source["role"] == "self":
         return "Vos"
     return source["role"]
+
+
+def build_latest_message_sentence(source, speaker, text):
+    message = shorten(text, 220)
+    if source["role"] == "self":
+        return f"Lo ultimo que encuentro fue un mensaje tuyo del {source['localDate']} a las {source['localTime']}, diciendo {message}."
+    return f"Lo ultimo que encuentro fue un mensaje de {speaker} del {source['localDate']} a las {source['localTime']}, diciendo {message}."
 
 
 def build_persona_reply(query, confidence, sources, persona_name, llm_provider, ollama_model, ollama_url, style_profile):
