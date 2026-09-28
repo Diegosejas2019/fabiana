@@ -273,6 +273,66 @@ export function buildAudioManifest(candidates) {
   };
 }
 
+export function buildTranscriptionJobs(candidates, extractionManifest, options = {}) {
+  const outputDir = options.outputDir ?? "data/processed/transcription";
+  const language = options.language ?? "es";
+  const extractedByCandidateId = new Map(
+    (extractionManifest.files ?? [])
+      .filter((file) => ["extracted", "skipped_existing"].includes(file.status))
+      .map((file) => [file.candidateId, file])
+  );
+
+  const jobs = candidates
+    .filter((candidate) => extractedByCandidateId.has(candidate.id))
+    .map((candidate) => {
+      const extracted = extractedByCandidateId.get(candidate.id);
+
+      return {
+        id: `transcript_${candidate.id}`,
+        audioCandidateId: candidate.id,
+        messageId: candidate.messageId,
+        role: candidate.role,
+        participantId: candidate.participantId,
+        localAudioPath: extracted.localPath,
+        bytes: extracted.bytes,
+        status: "pending",
+        engine: null,
+        language,
+        transcriptPath: `${outputDir}/items/${candidate.id}.json`,
+        source: candidate.source
+      };
+    });
+
+  return {
+    jobs,
+    manifest: buildTranscriptionManifest(jobs, {
+      extractionManifestPath: options.extractionManifestPath ?? null
+    })
+  };
+}
+
+export function buildTranscriptionManifest(jobs, options = {}) {
+  const byRole = {};
+  const byStatus = {};
+  let totalBytes = 0;
+
+  for (const job of jobs) {
+    byRole[job.role] = (byRole[job.role] ?? 0) + 1;
+    byStatus[job.status] = (byStatus[job.status] ?? 0) + 1;
+    totalBytes += job.bytes ?? 0;
+  }
+
+  return {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    extractionManifestPath: options.extractionManifestPath,
+    jobCount: jobs.length,
+    byRole,
+    byStatus,
+    totalBytes
+  };
+}
+
 function finalizeRecord(record, index, options) {
   return {
     id: `msg_${String(index + 1).padStart(6, "0")}`,

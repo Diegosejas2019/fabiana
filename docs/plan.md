@@ -41,10 +41,12 @@ Objetivo: importar WhatsApp, reconocer autores, vincular multimedia y permitir c
 - Priorizar audios de la persona objetivo.
 - No extraer ni transcribir audios hasta elegir metodo.
 
-### Etapa 4 - Transcripción
+### Etapa 4 - Preparación de Transcripción
 
 - Extraer solo audios necesarios.
-- Transcribir localmente o con proveedor elegido explícitamente.
+- Crear lote de transcripción con estado `pending`.
+- Verificar herramientas locales disponibles.
+- Transcribir localmente o con proveedor elegido explícitamente en una etapa posterior.
 - Guardar transcripción vinculada al mensaje original.
 
 ## Después del MVP 1

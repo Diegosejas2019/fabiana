@@ -43,3 +43,25 @@ npm run audio:inventory -- data/processed/ingest/messages.jsonl data/processed/a
 ```
 
 Esto no transcribe ni extrae audios; solo prepara metadata privada para decidir el siguiente paso.
+
+Para extraer solo audios candidatos desde el ZIP:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\extract-audio-candidates.ps1 -ZipPath "C:\Users\Diego\Downloads\Chat de WhatsApp con Fabiana Sejas.zip" -CandidatesPath data/processed/audio/audio-candidates.jsonl -OutputDir data/processed/audio/extracted-target -Role targetPerson
+```
+
+Para preparar el lote de transcripcion local:
+
+```bash
+npm run transcription:batch -- data/processed/audio/audio-candidates.jsonl data/processed/audio/extracted-target/extraction-manifest.json data/processed/transcription
+```
+
+Esto deja trabajos en estado `pending`; no llama a ningun proveedor externo.
+
+Para transcribir localmente con `faster-whisper`:
+
+```bash
+npm run transcription:run-local -- --jobs data/processed/transcription/transcription-jobs.jsonl --model tiny --limit 1
+```
+
+El comando guarda transcripciones privadas en `data/processed/transcription/items`. La salida de consola solo muestra conteos.

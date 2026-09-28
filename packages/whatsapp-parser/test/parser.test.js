@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildAudioCandidates,
+  buildTranscriptionJobs,
   detectMediaReference,
   normalizeRecords,
   parseLineStart,
@@ -177,4 +178,55 @@ test("builds audio candidates without message text", () => {
   assert.equal(inventory.manifest.candidateCount, 1);
   assert.equal(inventory.manifest.byRole.targetPerson, 1);
   assert.equal(inventory.manifest.byExtension.opus, 1);
+});
+
+test("builds pending transcription jobs from extracted audio", () => {
+  const candidates = [
+    {
+      id: "audio_msg_000001",
+      messageId: "msg_000001",
+      role: "targetPerson",
+      participantId: "participant_target",
+      source: {
+        messageId: "msg_000001",
+        lineStart: 12,
+        lineEnd: 12
+      }
+    },
+    {
+      id: "audio_msg_000002",
+      messageId: "msg_000002",
+      role: "self",
+      participantId: "participant_self",
+      source: {
+        messageId: "msg_000002",
+        lineStart: 13,
+        lineEnd: 13
+      }
+    }
+  ];
+
+  const batch = buildTranscriptionJobs(
+    candidates,
+    {
+      files: [
+        {
+          candidateId: "audio_msg_000001",
+          localPath: "data/processed/audio/extracted-target/PTT-1.opus",
+          bytes: 123,
+          status: "extracted"
+        }
+      ]
+    },
+    { outputDir: "data/processed/transcription" }
+  );
+
+  assert.equal(batch.jobs.length, 1);
+  assert.equal(batch.jobs[0].id, "transcript_audio_msg_000001");
+  assert.equal(batch.jobs[0].status, "pending");
+  assert.equal(batch.jobs[0].engine, null);
+  assert.equal(batch.jobs[0].language, "es");
+  assert.equal("text" in batch.jobs[0], false);
+  assert.equal(batch.manifest.jobCount, 1);
+  assert.equal(batch.manifest.byStatus.pending, 1);
 });

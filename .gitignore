@@ -1,4 +1,5 @@
 node_modules/
+.venv/
 .env
 .env.*
 
@@ -9,4 +10,3 @@ data/media/
 
 *.log
 *.tmp
-
