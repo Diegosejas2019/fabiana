@@ -248,23 +248,28 @@ def build_recent_reply(sources, show_text):
     if not sources:
         return "No me aparecen mensajes recientes suficientes para responderte con fecha."
 
-    if not show_text:
+    latest = sources[0]
+    speaker = display_speaker(latest)
+    text = clean_source_text(latest.get("text", ""))
+
+    if show_text and text:
         return (
-            f"Lo ultimo que encuentro esta fechado el {sources[0]['localDate']} a las {sources[0]['localTime']}. "
-            "Para ver el contenido exacto, abri la respuesta en la app o usa --show-text."
+            f"Lo ultimo que encuentro es del {latest['localDate']} a las {latest['localTime']}. "
+            f"{speaker} te puso: \"{shorten(text, 220)}\"."
         )
 
-    chronological = sorted(sources, key=lambda item: (item.get("timestamp") or "", item.get("messageId") or ""))
-    latest = sources[0]
-    lines = [
-        f"Lo ultimo que encuentro en el chat es del {latest['localDate']} a las {latest['localTime']}.",
-        "En orden cronologico, los mensajes mas recientes son:",
-    ]
-    for source in chronological:
-        speaker = "Fabiana" if source["role"] == "targetPerson" else "Diego" if source["role"] == "self" else source["role"]
-        text = clean_source_text(source.get("text", ""))
-        lines.append(f"- {source['localDate']} {source['localTime']} - {speaker}: {text}")
-    return "\n".join(lines)
+    return (
+        f"Lo ultimo que encuentro esta fechado el {latest['localDate']} a las {latest['localTime']}. "
+        "Te dejo las fuentes al costado para ver el texto exacto."
+    )
+
+
+def display_speaker(source):
+    if source["role"] == "targetPerson":
+        return "Fabiana"
+    if source["role"] == "self":
+        return "Vos"
+    return source["role"]
 
 
 def build_persona_reply(query, confidence, sources, persona_name, llm_provider, ollama_model, ollama_url, style_profile):
