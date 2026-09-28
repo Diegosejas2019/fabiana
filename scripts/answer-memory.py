@@ -270,10 +270,67 @@ def display_speaker(source):
 
 
 def build_latest_message_sentence(source, speaker, text):
-    message = shorten(text, 220)
+    summary = summarize_message_meaning(source, text)
     if source["role"] == "self":
-        return f"Lo ultimo que encuentro fue un mensaje tuyo del {source['localDate']} a las {source['localTime']}, diciendo {message}."
-    return f"Lo ultimo que encuentro fue un mensaje de {speaker} del {source['localDate']} a las {source['localTime']}, diciendo {message}."
+        return f"Lo ultimo que encuentro fue un mensaje tuyo del {source['localDate']} a las {source['localTime']}; {summary}."
+    return f"Lo ultimo que encuentro fue un mensaje de {speaker} del {source['localDate']} a las {source['localTime']}; {summary}."
+
+
+def summarize_message_meaning(source, text):
+    normalized = normalize_for_match(text)
+
+    if "cargar" in normalized and "dato" in normalized:
+        return "el tema era que no se podian cargar los datos"
+
+    if "veo" in normalized and "manana" in normalized:
+        if source["role"] == "self":
+            return "le estabas diciendo que la veias al dia siguiente"
+        return "hablaba de verse al dia siguiente"
+
+    if "gracias" in normalized:
+        return "era un agradecimiento breve"
+
+    if "buen dia" in normalized or "buenos dias" in normalized:
+        return "era un saludo de buen dia"
+
+    keywords = extract_meaning_keywords(normalized)
+    if keywords:
+        return f"el tema giraba alrededor de {', '.join(keywords)}"
+
+    return "lo dejo en las fuentes para no copiarlo textual"
+
+
+def extract_meaning_keywords(text):
+    stop_words = {
+        "que",
+        "para",
+        "con",
+        "los",
+        "las",
+        "una",
+        "uno",
+        "del",
+        "por",
+        "pero",
+        "todo",
+        "esta",
+        "este",
+        "eso",
+        "aca",
+        "ahi",
+        "no",
+        "si",
+    }
+    words = [
+        word
+        for word in text.split()
+        if len(word) > 3 and word not in stop_words and word.isalnum()
+    ]
+    seen = []
+    for word in words:
+        if word not in seen:
+            seen.append(word)
+    return seen[:4]
 
 
 def build_persona_reply(query, confidence, sources, persona_name, llm_provider, ollama_model, ollama_url, style_profile):
@@ -451,6 +508,7 @@ def asks_recent_conversation(query):
         "que hablamos",
         "conversacion",
         "nos enviamos",
+        "nos dijimos",
         "me envie con",
         "me envie",
     ]
