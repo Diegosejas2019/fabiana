@@ -12,7 +12,9 @@
     "audio:inventory": "node packages/whatsapp-parser/src/cli.js audio-inventory",
     "transcription:batch": "node packages/whatsapp-parser/src/cli.js transcription-batch",
     "transcription:run-local": ".venv\\Scripts\\python.exe scripts\\transcribe-faster-whisper.py",
-    "transcription:compare": "node scripts/compare-transcription-runs.js"
+    "transcription:compare": "node scripts/compare-transcription-runs.js",
+    "memory:build": "node packages/whatsapp-parser/src/cli.js memory-build",
+    "memory:chunk": "node packages/whatsapp-parser/src/cli.js memory-chunk"
   },
   "workspaces": [
     "packages/*"

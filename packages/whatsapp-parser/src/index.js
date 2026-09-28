@@ -333,6 +333,133 @@ export function buildTranscriptionManifest(jobs, options = {}) {
   };
 }
 
+export function buildMemories(messages, transcripts = []) {
+  const transcriptByMessageId = new Map(
+    transcripts
+      .filter((transcript) => transcript.messageId && hasUsefulText(transcript.text))
+      .map((transcript) => [transcript.messageId, transcript])
+  );
+
+  const memories = [];
+
+  for (const message of messages) {
+    if (message.kind === "system" || message.role === "system") {
+      continue;
+    }
+
+    const transcript = transcriptByMessageId.get(message.id);
+
+    if (transcript) {
+      memories.push(memoryFromTranscript(message, transcript));
+      continue;
+    }
+
+    if (!hasUsefulText(message.text) || isMediaOnlyText(message.text, message.media)) {
+      continue;
+    }
+
+    memories.push(memoryFromMessage(message));
+  }
+
+  return {
+    memories,
+    manifest: buildMemoryManifest(memories)
+  };
+}
+
+export function buildMemoryManifest(memories) {
+  const byRole = {};
+  const bySourceType = {};
+  let targetPersonCount = 0;
+  let totalCharacters = 0;
+
+  for (const memory of memories) {
+    byRole[memory.role] = (byRole[memory.role] ?? 0) + 1;
+    bySourceType[memory.sourceType] = (bySourceType[memory.sourceType] ?? 0) + 1;
+    totalCharacters += memory.textLength;
+
+    if (memory.eligibleForPersona) {
+      targetPersonCount++;
+    }
+  }
+
+  return {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    memoryCount: memories.length,
+    targetPersonCount,
+    byRole,
+    bySourceType,
+    totalCharacters,
+    firstTimestamp: memories[0]?.timestamp ?? null,
+    lastTimestamp: memories.at(-1)?.timestamp ?? null
+  };
+}
+
+export function buildMemoryChunks(memories, options = {}) {
+  const maxChars = options.maxChars ?? 900;
+  const overlapChars = options.overlapChars ?? 120;
+  const chunks = [];
+
+  for (const memory of memories) {
+    const parts = splitText(memory.text, { maxChars, overlapChars });
+
+    parts.forEach((part, index) => {
+      chunks.push({
+        id: `${memory.id}_chunk_${String(index + 1).padStart(3, "0")}`,
+        memoryId: memory.id,
+        messageId: memory.messageId,
+        chunkIndex: index,
+        chunkCount: parts.length,
+        timestamp: memory.timestamp,
+        localDate: memory.localDate,
+        localTime: memory.localTime,
+        role: memory.role,
+        participantId: memory.participantId,
+        sourceType: memory.sourceType,
+        text: part,
+        textLength: part.length,
+        eligibleForPersona: memory.eligibleForPersona,
+        evidence: memory.evidence
+      });
+    });
+  }
+
+  return {
+    chunks,
+    manifest: buildChunkManifest(chunks, { maxChars, overlapChars })
+  };
+}
+
+export function buildChunkManifest(chunks, options = {}) {
+  const byRole = {};
+  const bySourceType = {};
+  let targetPersonCount = 0;
+  let totalCharacters = 0;
+
+  for (const chunk of chunks) {
+    byRole[chunk.role] = (byRole[chunk.role] ?? 0) + 1;
+    bySourceType[chunk.sourceType] = (bySourceType[chunk.sourceType] ?? 0) + 1;
+    totalCharacters += chunk.textLength;
+
+    if (chunk.eligibleForPersona) {
+      targetPersonCount++;
+    }
+  }
+
+  return {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    chunkCount: chunks.length,
+    targetPersonCount,
+    byRole,
+    bySourceType,
+    totalCharacters,
+    maxChars: options.maxChars,
+    overlapChars: options.overlapChars
+  };
+}
+
 function finalizeRecord(record, index, options) {
   return {
     id: `msg_${String(index + 1).padStart(6, "0")}`,
@@ -445,6 +572,101 @@ function audioPriority(message) {
   }
 
   return 0;
+}
+
+function memoryFromTranscript(message, transcript) {
+  const text = transcript.text.trim();
+
+  return {
+    id: `mem_${message.id}_audio`,
+    messageId: message.id,
+    timestamp: message.timestamp,
+    localDate: message.localDate,
+    localTime: message.localTime,
+    role: message.role,
+    participantId: message.participantId,
+    sourceType: "audio_transcript",
+    text,
+    textLength: text.length,
+    eligibleForPersona: message.role === "targetPerson",
+    evidence: {
+      kind: "audio_transcript",
+      messageId: message.id,
+      audioCandidateId: transcript.audioCandidateId,
+      transcriptPath: transcript.transcriptPath ?? null,
+      engine: transcript.engine ?? null,
+      model: transcript.model ?? null,
+      source: message.source
+    }
+  };
+}
+
+function memoryFromMessage(message) {
+  const text = message.text.trim();
+
+  return {
+    id: `mem_${message.id}_text`,
+    messageId: message.id,
+    timestamp: message.timestamp,
+    localDate: message.localDate,
+    localTime: message.localTime,
+    role: message.role,
+    participantId: message.participantId,
+    sourceType: "whatsapp_text",
+    text,
+    textLength: text.length,
+    eligibleForPersona: message.role === "targetPerson",
+    evidence: {
+      kind: "whatsapp_text",
+      messageId: message.id,
+      source: message.source
+    }
+  };
+}
+
+function hasUsefulText(text) {
+  return typeof text === "string" && text.trim().length > 0;
+}
+
+function isMediaOnlyText(text, media) {
+  if (!media || !text) {
+    return false;
+  }
+
+  const normalized = text.trim().toLowerCase();
+  const filename = media.filename.toLowerCase();
+
+  return (
+    normalized === filename ||
+    normalized === `${filename} (archivo adjunto)` ||
+    normalized === `${filename} (file attached)` ||
+    normalized.includes("<multimedia omitido>") ||
+    normalized.includes("<media omitted>")
+  );
+}
+
+function splitText(text, options) {
+  const clean = text.trim();
+
+  if (clean.length <= options.maxChars) {
+    return [clean];
+  }
+
+  const chunks = [];
+  let start = 0;
+
+  while (start < clean.length) {
+    const end = Math.min(start + options.maxChars, clean.length);
+    chunks.push(clean.slice(start, end).trim());
+
+    if (end === clean.length) {
+      break;
+    }
+
+    start = Math.max(end - options.overlapChars, start + 1);
+  }
+
+  return chunks.filter((chunk) => chunk.length > 0);
 }
 
 function toTimestamp(date, time) {

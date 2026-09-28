@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildAudioCandidates,
+  buildMemoryChunks,
+  buildMemories,
   buildTranscriptionJobs,
   detectMediaReference,
   normalizeRecords,
@@ -229,4 +231,100 @@ test("builds pending transcription jobs from extracted audio", () => {
   assert.equal("text" in batch.jobs[0], false);
   assert.equal(batch.manifest.jobCount, 1);
   assert.equal(batch.manifest.byStatus.pending, 1);
+});
+
+test("builds memories from written messages and audio transcripts", () => {
+  const messages = [
+    {
+      id: "msg_000001",
+      kind: "system",
+      role: "system",
+      text: "system",
+      source: { lineStart: 1, lineEnd: 1 }
+    },
+    {
+      id: "msg_000002",
+      kind: "message",
+      timestamp: "2024-01-01T00:00:00.000Z",
+      localDate: "1/1/2024",
+      localTime: "00:00",
+      role: "targetPerson",
+      participantId: "participant_target",
+      text: "Hola escrito",
+      media: null,
+      source: { lineStart: 2, lineEnd: 2 }
+    },
+    {
+      id: "msg_000003",
+      kind: "message",
+      timestamp: "2024-01-01T00:01:00.000Z",
+      localDate: "1/1/2024",
+      localTime: "00:01",
+      role: "targetPerson",
+      participantId: "participant_target",
+      text: "PTT-1.opus (archivo adjunto)",
+      media: { filename: "PTT-1.opus", extension: "opus" },
+      source: { lineStart: 3, lineEnd: 3 }
+    },
+    {
+      id: "msg_000004",
+      kind: "message",
+      timestamp: "2024-01-01T00:02:00.000Z",
+      localDate: "1/1/2024",
+      localTime: "00:02",
+      role: "self",
+      participantId: "participant_self",
+      text: "Respuesta",
+      media: null,
+      source: { lineStart: 4, lineEnd: 4 }
+    }
+  ];
+  const transcripts = [
+    {
+      messageId: "msg_000003",
+      audioCandidateId: "audio_msg_000003",
+      engine: "faster-whisper",
+      model: "small",
+      text: "Hola desde audio"
+    }
+  ];
+
+  const memory = buildMemories(messages, transcripts);
+
+  assert.equal(memory.memories.length, 3);
+  assert.equal(memory.memories[0].sourceType, "whatsapp_text");
+  assert.equal(memory.memories[1].sourceType, "audio_transcript");
+  assert.equal(memory.memories[1].text, "Hola desde audio");
+  assert.equal(memory.memories[1].eligibleForPersona, true);
+  assert.equal(memory.memories[2].eligibleForPersona, false);
+  assert.equal(memory.manifest.bySourceType.whatsapp_text, 2);
+  assert.equal(memory.manifest.bySourceType.audio_transcript, 1);
+  assert.equal(memory.manifest.targetPersonCount, 2);
+});
+
+test("builds chunks while preserving evidence", () => {
+  const memories = [
+    {
+      id: "mem_1",
+      messageId: "msg_1",
+      timestamp: "2024-01-01T00:00:00.000Z",
+      localDate: "1/1/2024",
+      localTime: "00:00",
+      role: "targetPerson",
+      participantId: "participant_target",
+      sourceType: "whatsapp_text",
+      text: "uno dos tres cuatro cinco seis",
+      textLength: 30,
+      eligibleForPersona: true,
+      evidence: { kind: "whatsapp_text", messageId: "msg_1" }
+    }
+  ];
+
+  const result = buildMemoryChunks(memories, { maxChars: 12, overlapChars: 3 });
+
+  assert.equal(result.chunks.length > 1, true);
+  assert.equal(result.chunks[0].memoryId, "mem_1");
+  assert.equal(result.chunks[0].eligibleForPersona, true);
+  assert.deepEqual(result.chunks[0].evidence, memories[0].evidence);
+  assert.equal(result.manifest.byRole.targetPerson, result.chunks.length);
 });

@@ -51,7 +51,8 @@ Objetivo: importar WhatsApp, reconocer autores, vincular multimedia y permitir c
 
 ## Después del MVP 1
 
-- RAG con fuentes.
+- Memoria normalizada con mensajes escritos y audios transcritos.
+- Chunking para embeddings/RAG.
 - Sistema anti-alucinaciones.
 - Interfaz tipo chat.
 - Estilo personal.

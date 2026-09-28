@@ -77,3 +77,19 @@ Para comparar dos pasadas sin imprimir transcripciones:
 ```bash
 npm run transcription:compare -- data/processed/transcription/items data/processed/transcription/items-small
 ```
+
+Para crear memoria normalizada usando las transcripciones `small`:
+
+```bash
+npm run memory:build -- data/processed/ingest/messages.jsonl data/processed/transcription/items-small data/processed/memory
+```
+
+Esto genera `memories.jsonl` y `memory-manifest.json`, ambos privados e ignorados por git.
+
+Para preparar chunks para embeddings/RAG:
+
+```bash
+npm run memory:chunk -- data/processed/memory/memories.jsonl data/processed/memory
+```
+
+Esto genera `chunks.jsonl` y `chunk-manifest.json`.

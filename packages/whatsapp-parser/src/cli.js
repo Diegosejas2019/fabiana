@@ -1,8 +1,10 @@
 #!/usr/bin/env node
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   buildAudioCandidates,
+  buildMemoryChunks,
+  buildMemories,
   buildTranscriptionJobs,
   normalizeRecords,
   parseWhatsAppText,
@@ -13,9 +15,15 @@ import {
 const [, , command, filePath, secondPath, thirdPath, ...rawFlags] = process.argv;
 
 if (
-  !["summary", "media-check", "ingest", "audio-inventory", "transcription-batch"].includes(
-    command
-  ) ||
+  ![
+    "summary",
+    "media-check",
+    "ingest",
+    "audio-inventory",
+    "transcription-batch",
+    "memory-build",
+    "memory-chunk"
+  ].includes(command) ||
   !filePath
 ) {
   console.error(
@@ -25,7 +33,9 @@ if (
       "  node packages/whatsapp-parser/src/cli.js media-check <chat.txt> <zip-inventory.json>",
       "  node packages/whatsapp-parser/src/cli.js ingest <chat.txt> <zip-inventory.json> <output-dir> --target <nombre> [--self-label <nombre>]",
       "  node packages/whatsapp-parser/src/cli.js audio-inventory <messages.jsonl> <output-dir>",
-      "  node packages/whatsapp-parser/src/cli.js transcription-batch <audio-candidates.jsonl> <extraction-manifest.json> <output-dir>"
+      "  node packages/whatsapp-parser/src/cli.js transcription-batch <audio-candidates.jsonl> <extraction-manifest.json> <output-dir>",
+      "  node packages/whatsapp-parser/src/cli.js memory-build <messages.jsonl> <transcripts-dir> <output-dir>",
+      "  node packages/whatsapp-parser/src/cli.js memory-chunk <memories.jsonl> <output-dir> [--max-chars 900] [--overlap-chars 120]"
     ].join("\n")
   );
   process.exit(1);
@@ -187,6 +197,79 @@ if (command === "transcription-batch") {
   );
 }
 
+if (command === "memory-build") {
+  if (!secondPath || !thirdPath) {
+    console.error("Faltan <transcripts-dir> y/o <output-dir>.");
+    process.exit(1);
+  }
+
+  const messages = readJsonLines(text);
+  const transcripts = await readTranscriptDirectory(secondPath);
+  const memory = buildMemories(messages, transcripts);
+  const memoriesJsonl = memory.memories.map((row) => JSON.stringify(row)).join("\n");
+
+  await mkdir(thirdPath, { recursive: true });
+  await writeFile(join(thirdPath, "memories.jsonl"), `${memoriesJsonl}\n`, "utf8");
+  await writeFile(
+    join(thirdPath, "memory-manifest.json"),
+    `${JSON.stringify(memory.manifest, null, 2)}\n`,
+    "utf8"
+  );
+
+  console.log(
+    JSON.stringify(
+      {
+        outputDir: thirdPath,
+        memoryCount: memory.manifest.memoryCount,
+        targetPersonCount: memory.manifest.targetPersonCount,
+        byRole: memory.manifest.byRole,
+        bySourceType: memory.manifest.bySourceType,
+        totalCharacters: memory.manifest.totalCharacters
+      },
+      null,
+      2
+    )
+  );
+}
+
+if (command === "memory-chunk") {
+  if (!secondPath) {
+    console.error("Falta <output-dir>.");
+    process.exit(1);
+  }
+
+  const flags = parseFlags(rawFlags);
+  const memories = readJsonLines(text);
+  const result = buildMemoryChunks(memories, {
+    maxChars: Number(flags["max-chars"] ?? 900),
+    overlapChars: Number(flags["overlap-chars"] ?? 120)
+  });
+  const chunksJsonl = result.chunks.map((row) => JSON.stringify(row)).join("\n");
+
+  await mkdir(secondPath, { recursive: true });
+  await writeFile(join(secondPath, "chunks.jsonl"), `${chunksJsonl}\n`, "utf8");
+  await writeFile(
+    join(secondPath, "chunk-manifest.json"),
+    `${JSON.stringify(result.manifest, null, 2)}\n`,
+    "utf8"
+  );
+
+  console.log(
+    JSON.stringify(
+      {
+        outputDir: secondPath,
+        chunkCount: result.manifest.chunkCount,
+        targetPersonCount: result.manifest.targetPersonCount,
+        byRole: result.manifest.byRole,
+        bySourceType: result.manifest.bySourceType,
+        totalCharacters: result.manifest.totalCharacters
+      },
+      null,
+      2
+    )
+  );
+}
+
 async function readJson(path) {
   const text = (await readFile(path, "utf8")).replace(/^\uFEFF/, "");
   return JSON.parse(text);
@@ -216,4 +299,17 @@ function readJsonLines(text) {
     .split(/\r?\n/)
     .filter((line) => line.trim().length > 0)
     .map((line) => JSON.parse(line));
+}
+
+async function readTranscriptDirectory(path) {
+  const files = (await readdir(path)).filter((file) => file.endsWith(".json"));
+  const transcripts = [];
+
+  for (const file of files) {
+    const transcript = await readJson(join(path, file));
+    transcript.transcriptPath = join(path, file);
+    transcripts.push(transcript);
+  }
+
+  return transcripts;
 }
