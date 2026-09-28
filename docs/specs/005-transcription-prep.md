@@ -67,4 +67,4 @@ El runner debe:
 - guardar cada resultado en `items/<audioCandidateId>.json`;
 - guardar `transcription-run-manifest.json`;
 - no imprimir el texto transcripto en consola.
-
+- permitir salidas por modelo para comparar calidad sin pisar resultados previos.

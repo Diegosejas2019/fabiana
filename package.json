@@ -11,7 +11,8 @@
     "ingest": "node packages/whatsapp-parser/src/cli.js ingest",
     "audio:inventory": "node packages/whatsapp-parser/src/cli.js audio-inventory",
     "transcription:batch": "node packages/whatsapp-parser/src/cli.js transcription-batch",
-    "transcription:run-local": ".venv\\Scripts\\python.exe scripts\\transcribe-faster-whisper.py"
+    "transcription:run-local": ".venv\\Scripts\\python.exe scripts\\transcribe-faster-whisper.py",
+    "transcription:compare": "node scripts/compare-transcription-runs.js"
   },
   "workspaces": [
     "packages/*"

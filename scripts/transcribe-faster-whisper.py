@@ -15,6 +15,12 @@ def main():
     parser.add_argument("--device", default="cpu", help="Device, usually cpu")
     parser.add_argument("--compute-type", default="int8", help="Compute type, usually int8 on CPU")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing transcript files")
+    parser.add_argument("--items-dir-name", default="items", help="Directory name for transcript JSON files")
+    parser.add_argument(
+        "--manifest-name",
+        default="transcription-run-manifest.json",
+        help="Run manifest filename",
+    )
     args = parser.parse_args()
 
     jobs_path = Path(args.jobs)
@@ -25,7 +31,7 @@ def main():
         pending = pending[: args.limit]
 
     output_dir = jobs_path.parent
-    items_dir = output_dir / "items"
+    items_dir = output_dir / args.items_dir_name
     items_dir.mkdir(parents=True, exist_ok=True)
 
     model = WhisperModel(args.model, device=args.device, compute_type=args.compute_type)
@@ -119,7 +125,7 @@ def main():
         "failed": failed,
     }
 
-    manifest_path = output_dir / "transcription-run-manifest.json"
+    manifest_path = output_dir / args.manifest_name
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     print(

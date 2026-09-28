@@ -65,3 +65,15 @@ npm run transcription:run-local -- --jobs data/processed/transcription/transcrip
 ```
 
 El comando guarda transcripciones privadas en `data/processed/transcription/items`. La salida de consola solo muestra conteos.
+
+Para correr otro modelo sin pisar resultados:
+
+```bash
+npm run transcription:run-local -- --jobs data/processed/transcription/transcription-jobs.jsonl --model small --items-dir-name items-small --manifest-name transcription-run-small.json
+```
+
+Para comparar dos pasadas sin imprimir transcripciones:
+
+```bash
+npm run transcription:compare -- data/processed/transcription/items data/processed/transcription/items-small
+```
