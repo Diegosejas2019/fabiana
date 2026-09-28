@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   detectMediaReference,
+  normalizeRecords,
   parseLineStart,
   parseWhatsAppText,
   reconcileMediaReferences,
@@ -91,4 +92,33 @@ test("reconciles referenced media against zip inventory", () => {
   assert.equal(result.matchedCount, 1);
   assert.equal(result.missingCount, 1);
   assert.equal(result.missing[0].filename, "PTT-20240101-WA0018.opus");
+});
+
+test("normalizes records with participants, roles, sources, and media status", () => {
+  const records = parseWhatsAppText(
+    [
+      "30/12/2023, 18:50 - Mensaje de sistema",
+      "31/12/2023, 13:09 - Fabiana Sejas: IMG-20240101-WA0049.jpg (archivo adjunto)",
+      "31/12/2023, 13:10 - : Respuesta propia",
+      "31/12/2023, 13:11 - Otra Persona: Documento.pdf (archivo adjunto)"
+    ].join("\n")
+  );
+
+  const ingestion = normalizeRecords(records, [{ name: "IMG-20240101-WA0049.jpg", length: 123 }], {
+    targetAuthor: "Fabiana Sejas",
+    selfLabel: "Diego"
+  });
+
+  assert.equal(ingestion.messages.length, 4);
+  assert.equal(ingestion.messages[0].role, "system");
+  assert.equal(ingestion.messages[1].role, "targetPerson");
+  assert.equal(ingestion.messages[1].media.status, "matched");
+  assert.equal(ingestion.messages[2].role, "self");
+  assert.equal(ingestion.messages[3].role, "other");
+  assert.equal(ingestion.messages[3].media.status, "missing");
+  assert.equal(ingestion.messages[1].source.format, "whatsapp_export");
+  assert.equal(ingestion.manifest.byRole.targetPerson, 1);
+  assert.equal(ingestion.manifest.byRole.self, 1);
+  assert.equal(ingestion.manifest.mediaByStatus.matched, 1);
+  assert.equal(ingestion.manifest.mediaByStatus.missing, 1);
 });

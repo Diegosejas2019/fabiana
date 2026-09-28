@@ -28,3 +28,10 @@ Para resumir un export ya extraído:
 npm run parse:summary -- data/raw/chat.txt
 ```
 
+Para crear una ingesta normalizada privada:
+
+```bash
+npm run ingest -- data/raw/chat.txt data/processed/zip-inventory.json data/processed/ingest --target "Fabiana Sejas" --self-label "Diego"
+```
+
+La salida queda en `data/processed/ingest`, que esta ignorado por git.

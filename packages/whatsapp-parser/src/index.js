@@ -119,16 +119,7 @@ export function summarizeRecords(records) {
 }
 
 export function reconcileMediaReferences(records, zipEntries) {
-  const available = new Map();
-
-  for (const entry of zipEntries) {
-    const name = basename(entry.name ?? entry.FullName ?? "");
-    if (!name) {
-      continue;
-    }
-
-    available.set(name.toLowerCase(), entry);
-  }
+  const available = buildMediaInventory(zipEntries);
 
   const referenced = records
     .filter((record) => record.media?.filename)
@@ -157,6 +148,73 @@ export function reconcileMediaReferences(records, zipEntries) {
   };
 }
 
+export function normalizeRecords(records, zipEntries, options = {}) {
+  const targetAuthor = options.targetAuthor;
+  const selfLabel = options.selfLabel ?? "self";
+  const inventory = buildMediaInventory(zipEntries);
+  const participantMap = new Map();
+
+  const normalized = records.map((record) => {
+    const participant = resolveParticipant(record, {
+      targetAuthor,
+      selfLabel,
+      participantMap
+    });
+
+    return {
+      id: record.id,
+      kind: record.kind,
+      timestamp: record.timestamp,
+      localDate: record.localDate,
+      localTime: record.localTime,
+      participantId: participant.id,
+      role: participant.role,
+      author: record.author,
+      text: record.body ?? null,
+      textLength: record.bodyLength,
+      media: normalizeMedia(record.media, inventory),
+      source: {
+        format: "whatsapp_export",
+        lineStart: record.sourceLineStart,
+        lineEnd: record.sourceLineEnd
+      }
+    };
+  });
+
+  return {
+    messages: normalized,
+    participants: [...participantMap.values()],
+    manifest: buildIngestionManifest(normalized, [...participantMap.values()])
+  };
+}
+
+export function buildIngestionManifest(messages, participants) {
+  const byRole = {};
+  const byKind = {};
+  const mediaByStatus = {};
+
+  for (const message of messages) {
+    byRole[message.role] = (byRole[message.role] ?? 0) + 1;
+    byKind[message.kind] = (byKind[message.kind] ?? 0) + 1;
+
+    if (message.media) {
+      mediaByStatus[message.media.status] = (mediaByStatus[message.media.status] ?? 0) + 1;
+    }
+  }
+
+  return {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    messageCount: messages.length,
+    participants,
+    byRole,
+    byKind,
+    mediaByStatus,
+    firstTimestamp: messages[0]?.timestamp ?? null,
+    lastTimestamp: messages.at(-1)?.timestamp ?? null
+  };
+}
+
 function finalizeRecord(record, index, options) {
   return {
     id: `msg_${String(index + 1).padStart(6, "0")}`,
@@ -173,6 +231,84 @@ function finalizeRecord(record, index, options) {
   };
 }
 
+function buildMediaInventory(zipEntries) {
+  const available = new Map();
+
+  for (const entry of zipEntries) {
+    const name = basename(entry.name ?? entry.FullName ?? "");
+    if (!name) {
+      continue;
+    }
+
+    available.set(name.toLowerCase(), entry);
+  }
+
+  return available;
+}
+
+function resolveParticipant(record, options) {
+  if (record.kind === "system") {
+    return ensureParticipant(options.participantMap, {
+      id: "participant_system",
+      role: "system",
+      author: null,
+      displayName: "WhatsApp system"
+    });
+  }
+
+  if (record.author === options.targetAuthor) {
+    return ensureParticipant(options.participantMap, {
+      id: "participant_target",
+      role: "targetPerson",
+      author: record.author,
+      displayName: record.author
+    });
+  }
+
+  if (record.author === null) {
+    return ensureParticipant(options.participantMap, {
+      id: "participant_self",
+      role: "self",
+      author: null,
+      displayName: options.selfLabel
+    });
+  }
+
+  const id = `participant_other_${slugify(record.author)}`;
+
+  return ensureParticipant(options.participantMap, {
+    id,
+    role: "other",
+    author: record.author,
+    displayName: record.author
+  });
+}
+
+function ensureParticipant(participantMap, participant) {
+  if (!participantMap.has(participant.id)) {
+    participantMap.set(participant.id, participant);
+  }
+
+  return participantMap.get(participant.id);
+}
+
+function normalizeMedia(media, inventory) {
+  if (!media) {
+    return null;
+  }
+
+  const entry = inventory.get(media.filename.toLowerCase());
+  const extension = media.filename.split(".").pop()?.toLowerCase() ?? "";
+
+  return {
+    filename: media.filename,
+    extension,
+    status: entry ? "matched" : "missing",
+    zipEntryName: entry?.name ?? null,
+    bytes: entry?.length ?? null
+  };
+}
+
 function toTimestamp(date, time) {
   const [day, month, year] = date.split("/").map(Number);
   const [hour, minute] = time.split(":").map(Number);
@@ -183,4 +319,14 @@ function toTimestamp(date, time) {
 
 function basename(path) {
   return path.split(/[\\/]/).at(-1);
+}
+
+function slugify(value) {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 48);
 }

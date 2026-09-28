@@ -26,6 +26,14 @@ Objetivo: importar WhatsApp, reconocer autores, vincular multimedia y permitir c
 - Inventariar audios, imágenes, videos, contactos y documentos.
 - Vincular referencias del chat con entradas del ZIP.
 
+### Etapa 2b - Ingesta Normalizada
+
+- Convertir mensajes parseados a JSONL privado.
+- Asignar roles `targetPerson`, `self`, `other` y `system`.
+- Guardar participantes detectados.
+- Guardar manifest con conteos y rango temporal.
+- Reportar medios faltantes sin exponer cuerpos de mensajes.
+
 ### Etapa 3 - Transcripción
 
 - Extraer solo audios necesarios.
@@ -39,4 +47,3 @@ Objetivo: importar WhatsApp, reconocer autores, vincular multimedia y permitir c
 - Interfaz tipo chat.
 - Estilo personal.
 - Voz sintetizada marcada como tal.
-

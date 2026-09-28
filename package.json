@@ -7,7 +7,8 @@
   "scripts": {
     "test": "node --test",
     "parse:summary": "node packages/whatsapp-parser/src/cli.js summary",
-    "media:check": "node packages/whatsapp-parser/src/cli.js media-check"
+    "media:check": "node packages/whatsapp-parser/src/cli.js media-check",
+    "ingest": "node packages/whatsapp-parser/src/cli.js ingest"
   },
   "workspaces": [
     "packages/*"
