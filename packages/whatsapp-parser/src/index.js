@@ -4,6 +4,8 @@ const LINE_START =
 const MEDIA_REFERENCE =
   /(?<filename>[\w().\-\s]+?\.(?:opus|ogg|m4a|jpg|jpeg|png|webp|mp4|pdf|vcf))\b/i;
 
+const AUDIO_EXTENSIONS = new Set(["opus", "ogg", "m4a"]);
+
 export function parseWhatsAppText(text, options = {}) {
   const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
   const records = [];
@@ -215,6 +217,62 @@ export function buildIngestionManifest(messages, participants) {
   };
 }
 
+export function buildAudioCandidates(messages) {
+  const candidates = messages
+    .filter((message) => message.media && AUDIO_EXTENSIONS.has(message.media.extension))
+    .map((message) => ({
+      id: `audio_${message.id}`,
+      messageId: message.id,
+      timestamp: message.timestamp,
+      localDate: message.localDate,
+      localTime: message.localTime,
+      role: message.role,
+      participantId: message.participantId,
+      filename: message.media.filename,
+      extension: message.media.extension,
+      zipEntryName: message.media.zipEntryName,
+      bytes: message.media.bytes,
+      mediaStatus: message.media.status,
+      priority: audioPriority(message),
+      source: {
+        messageId: message.id,
+        lineStart: message.source.lineStart,
+        lineEnd: message.source.lineEnd
+      }
+    }));
+
+  return {
+    candidates,
+    manifest: buildAudioManifest(candidates)
+  };
+}
+
+export function buildAudioManifest(candidates) {
+  const byRole = {};
+  const byExtension = {};
+  const byStatus = {};
+  let totalBytes = 0;
+
+  for (const candidate of candidates) {
+    byRole[candidate.role] = (byRole[candidate.role] ?? 0) + 1;
+    byExtension[candidate.extension] = (byExtension[candidate.extension] ?? 0) + 1;
+    byStatus[candidate.mediaStatus] = (byStatus[candidate.mediaStatus] ?? 0) + 1;
+    totalBytes += candidate.bytes ?? 0;
+  }
+
+  return {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    candidateCount: candidates.length,
+    byRole,
+    byExtension,
+    byStatus,
+    totalBytes,
+    firstTimestamp: candidates[0]?.timestamp ?? null,
+    lastTimestamp: candidates.at(-1)?.timestamp ?? null
+  };
+}
+
 function finalizeRecord(record, index, options) {
   return {
     id: `msg_${String(index + 1).padStart(6, "0")}`,
@@ -307,6 +365,26 @@ function normalizeMedia(media, inventory) {
     zipEntryName: entry?.name ?? null,
     bytes: entry?.length ?? null
   };
+}
+
+function audioPriority(message) {
+  if (message.media?.status !== "matched") {
+    return 0;
+  }
+
+  if (message.role === "targetPerson") {
+    return 100;
+  }
+
+  if (message.role === "self") {
+    return 60;
+  }
+
+  if (message.role === "other") {
+    return 40;
+  }
+
+  return 0;
 }
 
 function toTimestamp(date, time) {

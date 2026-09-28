@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildAudioCandidates,
   detectMediaReference,
   normalizeRecords,
   parseLineStart,
@@ -121,4 +122,59 @@ test("normalizes records with participants, roles, sources, and media status", (
   assert.equal(ingestion.manifest.byRole.self, 1);
   assert.equal(ingestion.manifest.mediaByStatus.matched, 1);
   assert.equal(ingestion.manifest.mediaByStatus.missing, 1);
+});
+
+test("builds audio candidates without message text", () => {
+  const messages = [
+    {
+      id: "msg_000001",
+      timestamp: "2024-01-01T04:13:00.000Z",
+      localDate: "1/1/2024",
+      localTime: "01:13",
+      role: "targetPerson",
+      participantId: "participant_target",
+      text: "contenido privado",
+      media: {
+        filename: "PTT-20240101-WA0018.opus",
+        extension: "opus",
+        zipEntryName: "PTT-20240101-WA0018.opus",
+        bytes: 64507,
+        status: "matched"
+      },
+      source: {
+        lineStart: 12,
+        lineEnd: 12
+      }
+    },
+    {
+      id: "msg_000002",
+      timestamp: "2024-01-01T04:14:00.000Z",
+      localDate: "1/1/2024",
+      localTime: "01:14",
+      role: "self",
+      participantId: "participant_self",
+      text: "imagen privada",
+      media: {
+        filename: "IMG-20240101-WA0049.jpg",
+        extension: "jpg",
+        zipEntryName: "IMG-20240101-WA0049.jpg",
+        bytes: 120,
+        status: "matched"
+      },
+      source: {
+        lineStart: 13,
+        lineEnd: 13
+      }
+    }
+  ];
+
+  const inventory = buildAudioCandidates(messages);
+
+  assert.equal(inventory.candidates.length, 1);
+  assert.equal(inventory.candidates[0].messageId, "msg_000001");
+  assert.equal(inventory.candidates[0].priority, 100);
+  assert.equal("text" in inventory.candidates[0], false);
+  assert.equal(inventory.manifest.candidateCount, 1);
+  assert.equal(inventory.manifest.byRole.targetPerson, 1);
+  assert.equal(inventory.manifest.byExtension.opus, 1);
 });

@@ -35,3 +35,11 @@ npm run ingest -- data/raw/chat.txt data/processed/zip-inventory.json data/proce
 ```
 
 La salida queda en `data/processed/ingest`, que esta ignorado por git.
+
+Para preparar el inventario de audios candidatos:
+
+```bash
+npm run audio:inventory -- data/processed/ingest/messages.jsonl data/processed/audio
+```
+
+Esto no transcribe ni extrae audios; solo prepara metadata privada para decidir el siguiente paso.

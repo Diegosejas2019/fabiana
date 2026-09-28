@@ -34,7 +34,14 @@ Objetivo: importar WhatsApp, reconocer autores, vincular multimedia y permitir c
 - Guardar manifest con conteos y rango temporal.
 - Reportar medios faltantes sin exponer cuerpos de mensajes.
 
-### Etapa 3 - Transcripción
+### Etapa 3 - Pipeline de Audios
+
+- Detectar mensajes con audios `.opus`, `.ogg` y `.m4a`.
+- Crear inventario de candidatos para transcripción.
+- Priorizar audios de la persona objetivo.
+- No extraer ni transcribir audios hasta elegir metodo.
+
+### Etapa 4 - Transcripción
 
 - Extraer solo audios necesarios.
 - Transcribir localmente o con proveedor elegido explícitamente.

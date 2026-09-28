@@ -8,7 +8,8 @@
     "test": "node --test",
     "parse:summary": "node packages/whatsapp-parser/src/cli.js summary",
     "media:check": "node packages/whatsapp-parser/src/cli.js media-check",
-    "ingest": "node packages/whatsapp-parser/src/cli.js ingest"
+    "ingest": "node packages/whatsapp-parser/src/cli.js ingest",
+    "audio:inventory": "node packages/whatsapp-parser/src/cli.js audio-inventory"
   },
   "workspaces": [
     "packages/*"
