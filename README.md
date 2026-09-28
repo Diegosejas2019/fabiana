@@ -86,6 +86,20 @@ npm run memory:build -- data/processed/ingest/messages.jsonl data/processed/tran
 
 Esto genera `memories.jsonl` y `memory-manifest.json`, ambos privados e ignorados por git.
 
+Para importar mensajes de Facebook/Messenger de Fabiana:
+
+```powershell
+npm run facebook:import -- -ZipPath "C:\Users\Diego\Downloads\facebook-DiegoSejas11-28_09_2026-KRVypEGw.zip" -OutputDir data/processed/facebook -TargetName "Fabiana Sejas" -SelfName "Diego Sejas"
+```
+
+Para combinar WhatsApp + Facebook:
+
+```bash
+npm run memory:merge -- data/processed/combined-memory/memories.jsonl data/processed/memory/memories.jsonl data/processed/facebook/memories.jsonl
+```
+
+La interfaz local usa `data/processed/combined-memory` y `data/processed/combined-rag` automaticamente cuando existen; si no existen, vuelve a la memoria original de WhatsApp.
+
 Para preparar chunks para embeddings/RAG:
 
 ```bash
@@ -101,6 +115,7 @@ npm run persona:style -- data/processed/memory/memories.jsonl data/processed/per
 ```
 
 Esto genera un perfil privado con rasgos de forma de hablar. El perfil se usa solo como guia de estilo; los hechos siguen viniendo de fuentes recuperadas.
+Si ya combinaste WhatsApp + Facebook, usa `data/processed/combined-memory/memories.jsonl` como entrada.
 
 Para crear embeddings locales:
 

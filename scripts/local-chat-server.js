@@ -9,8 +9,10 @@ const root = process.cwd();
 const publicDir = resolve(root, "apps/chat");
 const pythonPath = resolve(root, ".venv/Scripts/python.exe");
 const answerScript = resolve(root, "scripts/answer-memory.py");
-const chunksPath = resolve(root, "data/processed/memory/chunks.jsonl");
-const indexDir = resolve(root, "data/processed/rag");
+const combinedChunksPath = resolve(root, "data/processed/combined-memory/chunks.jsonl");
+const combinedIndexDir = resolve(root, "data/processed/combined-rag");
+const defaultChunksPath = resolve(root, "data/processed/memory/chunks.jsonl");
+const defaultIndexDir = resolve(root, "data/processed/rag");
 const styleProfilePath = resolve(root, "data/processed/persona/persona-style.json");
 const port = Number(process.env.PORT ?? 4173);
 
@@ -61,9 +63,9 @@ async function handleAnswer(request, response) {
     "--query",
     query,
     "--chunks",
-    chunksPath,
+    resolveChunksPath(),
     "--index-dir",
-    indexDir,
+    resolveIndexDir(),
     "--top-k",
     String(Number(payload.topK ?? 8)),
     "--show-text"
@@ -84,6 +86,14 @@ async function handleAnswer(request, response) {
   const result = await runPython(args);
   response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
   response.end(result);
+}
+
+function resolveChunksPath() {
+  return existsSync(combinedChunksPath) ? combinedChunksPath : defaultChunksPath;
+}
+
+function resolveIndexDir() {
+  return existsSync(resolve(combinedIndexDir, "embeddings.npy")) ? combinedIndexDir : defaultIndexDir;
 }
 
 async function serveStatic(pathname, response, headOnly = false) {
