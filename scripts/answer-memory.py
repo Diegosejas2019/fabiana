@@ -28,6 +28,7 @@ def main():
     parser.add_argument("--source-type", default=None, help="Optional source type filter")
     parser.add_argument("--show-text", action="store_true", help="Include private source text in output")
     parser.add_argument("--persona-name", default="Fabi", help="Name to use for persona replies")
+    parser.add_argument("--style-profile", default=None, help="Optional persona style profile JSON")
     parser.add_argument(
         "--llm-provider",
         default=os.environ.get("ANSWER_LLM_PROVIDER", "auto"),
@@ -45,6 +46,7 @@ def main():
         help="Ollama chat API URL",
     )
     args = parser.parse_args()
+    style_profile = read_optional_style_profile(args.style_profile)
 
     index_dir = Path(args.index_dir)
     manifest = json.loads((index_dir / "embedding-manifest.json").read_text(encoding="utf-8"))
@@ -86,6 +88,7 @@ def main():
             args.llm_provider,
             args.ollama_model,
             args.ollama_url,
+            style_profile,
         )
 
     answer = {
@@ -99,6 +102,7 @@ def main():
         "retrievalMode": retrieval_mode,
         "reply": reply,
         "generationMode": generation_mode,
+        "styleProfile": summarize_style_profile(style_profile),
         "draft": draft,
         "evidenceCount": len(sources),
         "sources": sources,
@@ -118,6 +122,7 @@ def main():
                 "retrievalMode": answer["retrievalMode"],
                 "reply": answer["reply"],
                 "generationMode": answer["generationMode"],
+                "styleProfile": answer["styleProfile"],
                 "draft": answer["draft"],
                 "evidenceCount": answer["evidenceCount"],
                 "topScore": sources[0]["score"] if sources else None,
@@ -262,7 +267,7 @@ def build_recent_reply(sources, show_text):
     return "\n".join(lines)
 
 
-def build_persona_reply(query, confidence, sources, persona_name, llm_provider, ollama_model, ollama_url):
+def build_persona_reply(query, confidence, sources, persona_name, llm_provider, ollama_model, ollama_url, style_profile):
     if confidence == "none":
         return (
             "No tengo un recuerdo claro de eso en lo que guardaste. "
@@ -276,7 +281,7 @@ def build_persona_reply(query, confidence, sources, persona_name, llm_provider, 
     lower_query = normalize_for_match(query)
 
     if llm_provider in ("auto", "ollama") and source_texts:
-        generated = build_ollama_reply(query, sources, persona_name, ollama_model, ollama_url)
+        generated = build_ollama_reply(query, sources, persona_name, ollama_model, ollama_url, style_profile)
         if generated:
             return generated, f"ollama:{ollama_model}"
 
@@ -292,15 +297,17 @@ def build_persona_reply(query, confidence, sources, persona_name, llm_provider, 
     return build_general_reply(top_text, second_text, dates), "fallback"
 
 
-def build_ollama_reply(query, sources, persona_name, model, url):
+def build_ollama_reply(query, sources, persona_name, model, url, style_profile):
     prompt_sources = format_sources_for_prompt(sources)
     if not prompt_sources:
         return None
 
+    style_prompt = format_style_profile_for_prompt(style_profile)
     system_prompt = (
         "Sos un motor de redaccion para una app privada de memoria familiar. "
         f"Redacta como {persona_name}: cercana, simple, afectuosa y natural. "
         "Usa los mensajes recuperados como fuente de hechos y como guia de estilo. "
+        "Usa el perfil de estilo solo para forma de hablar, no como fuente de hechos. "
         "Podes inventar frases nuevas y tono conversacional, pero no inventes recuerdos, hechos, pedidos, promesas ni fechas. "
         "Si la evidencia no alcanza, decilo suavemente. "
         "No digas que sos IA, no menciones IDs tecnicos y no copies mensajes largos literalmente. "
@@ -308,6 +315,7 @@ def build_ollama_reply(query, sources, persona_name, model, url):
     )
     user_prompt = (
         f"Pregunta de Diego:\n{query}\n\n"
+        f"Perfil de estilo de Fabiana:\n{style_prompt}\n\n"
         "Mensajes/transcripciones recuperados de Fabiana:\n"
         f"{prompt_sources}\n\n"
         "Escribi una respuesta final nueva, como si Fabiana le respondiera ahora, manteniendote fiel a esas fuentes."
@@ -363,6 +371,47 @@ def clean_generated_reply(content):
     if not cleaned:
         return None
     return shorten(cleaned, 900)
+
+
+def read_optional_style_profile(path):
+    if not path:
+        return None
+    profile_path = Path(path)
+    if not profile_path.exists():
+        return None
+    return json.loads(profile_path.read_text(encoding="utf-8"))
+
+
+def format_style_profile_for_prompt(profile):
+    if not profile:
+        return "No hay perfil de estilo calculado; usa solo las fuentes recuperadas."
+
+    summary = profile.get("promptSummary")
+    if summary:
+        return shorten(summary, 1400)
+
+    hints = profile.get("toneHints") or []
+    phrases = [entry.get("value") for entry in profile.get("commonPhrases", [])[:10] if entry.get("value")]
+    words = [entry.get("value") for entry in profile.get("commonWords", [])[:12] if entry.get("value")]
+    parts = []
+    if hints:
+        parts.append(f"Rasgos: {', '.join(hints)}.")
+    if words:
+        parts.append(f"Palabras frecuentes: {', '.join(words)}.")
+    if phrases:
+        parts.append(f"Formas frecuentes: {' | '.join(phrases)}.")
+    return "\n".join(parts) if parts else "Perfil disponible, pero sin rasgos resumidos."
+
+
+def summarize_style_profile(profile):
+    if not profile:
+        return None
+    return {
+        "schemaVersion": profile.get("schemaVersion"),
+        "messageCount": profile.get("messageCount"),
+        "sampleCount": profile.get("sampleCount"),
+        "dateRange": profile.get("dateRange"),
+    }
 
 
 def asks_for_encouragement(query):

@@ -94,6 +94,14 @@ npm run memory:chunk -- data/processed/memory/memories.jsonl data/processed/memo
 
 Esto genera `chunks.jsonl` y `chunk-manifest.json`.
 
+Para crear el perfil de estilo de la persona objetivo:
+
+```bash
+npm run persona:style -- data/processed/memory/memories.jsonl data/processed/persona/persona-style.json --role targetPerson --sample-size 600
+```
+
+Esto genera un perfil privado con rasgos de forma de hablar. El perfil se usa solo como guia de estilo; los hechos siguen viniendo de fuentes recuperadas.
+
 Para crear embeddings locales:
 
 ```bash

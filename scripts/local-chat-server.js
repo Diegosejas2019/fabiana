@@ -11,6 +11,7 @@ const pythonPath = resolve(root, ".venv/Scripts/python.exe");
 const answerScript = resolve(root, "scripts/answer-memory.py");
 const chunksPath = resolve(root, "data/processed/memory/chunks.jsonl");
 const indexDir = resolve(root, "data/processed/rag");
+const styleProfilePath = resolve(root, "data/processed/persona/persona-style.json");
 const port = Number(process.env.PORT ?? 4173);
 
 const mimeTypes = {
@@ -67,6 +68,10 @@ async function handleAnswer(request, response) {
     String(Number(payload.topK ?? 8)),
     "--show-text"
   ];
+
+  if (existsSync(styleProfilePath)) {
+    args.push("--style-profile", styleProfilePath);
+  }
 
   if (payload.role) {
     args.push("--role", String(payload.role));

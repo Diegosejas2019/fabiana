@@ -55,7 +55,8 @@ function appendAnswer(answer) {
   const reply = answer.reply || answer.draft || "No tengo una respuesta suficiente con las fuentes disponibles.";
   const retrieval = answer.retrievalMode ?? "semantic";
   const generation = answer.generationMode ?? "fallback";
-  const mode = `Busqueda: ${retrieval} - Respuesta: ${generation}`;
+  const style = answer.styleProfile ? ` - Estilo: ${answer.styleProfile.sampleCount} muestras` : "";
+  const mode = `Busqueda: ${retrieval} - Respuesta: ${generation}${style}`;
   article.innerHTML = `
     <div class="bubble-meta">Fabiana (sintesis con fuentes)</div>
     <p>${escapeHtml(reply)}</p>
