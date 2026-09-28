@@ -55,9 +55,11 @@ def main():
     metadata = read_jsonl(index_dir / "embedding-metadata.jsonl")
     chunks_by_id = {chunk["id"]: chunk for chunk in read_jsonl(args.chunks)}
 
-    if asks_recent_messages(normalize_for_match(args.query)):
+    normalized_query = normalize_for_match(args.query)
+
+    if asks_recent_messages(normalized_query):
         retrieval_mode = "chronological"
-        include_conversation = asks_recent_conversation(normalize_for_match(args.query))
+        include_conversation = asks_recent_conversation(normalized_query)
         sources = build_recent_sources(
             metadata,
             chunks_by_id,
@@ -71,6 +73,14 @@ def main():
         draft = build_recent_draft(confidence, sources, args.show_text)
         reply = build_recent_reply(sources, args.show_text)
         generation_mode = "chronological"
+    elif asks_identity_fact(normalized_query):
+        retrieval_mode = "fact"
+        fact_terms = extract_fact_terms(normalized_query)
+        sources = build_fact_sources(metadata, chunks_by_id, args.top_k, args.role, args.source_type, args.show_text, fact_terms)
+        confidence = classify_fact_confidence(sources, fact_terms)
+        draft = build_fact_draft(confidence, sources, fact_terms)
+        reply = build_fact_reply(confidence, sources, fact_terms)
+        generation_mode = "fact-check"
     else:
         retrieval_mode = "semantic"
         embeddings = np.load(index_dir / "embeddings.npy")
@@ -181,6 +191,46 @@ def build_recent_sources(metadata, chunks_by_id, top_k, role, source_type, show_
     return sources
 
 
+def build_fact_sources(metadata, chunks_by_id, top_k, role, source_type, show_text, fact_terms):
+    candidates = []
+    terms = fact_terms["names"] + fact_terms["relations"]
+    for row in metadata:
+        if role and row["role"] != role:
+            continue
+        if source_type and row["sourceType"] != source_type:
+            continue
+
+        chunk = chunks_by_id[row["chunkId"]]
+        normalized_text = normalize_for_match(chunk["text"])
+        matched_names = [term for term in fact_terms["names"] if term in normalized_text]
+        matched_relations = [term for term in fact_terms["relations"] if relation_matches(term, normalized_text)]
+
+        if not matched_names and not matched_relations:
+            continue
+
+        match_count = len(matched_names) + len(matched_relations)
+        score = 0.25 + (0.35 * len(matched_names)) + (0.25 * len(matched_relations))
+        if all(term in normalized_text for term in terms):
+            score += 0.15
+        source = build_source(row, chunk, min(score, 1.0), show_text)
+        source["factMatches"] = {
+            "names": matched_names,
+            "relations": matched_relations,
+            "matchCount": match_count,
+        }
+        candidates.append(source)
+
+    candidates.sort(
+        key=lambda item: (
+            item.get("factMatches", {}).get("matchCount", 0),
+            item["score"],
+            item.get("timestamp") or "",
+        ),
+        reverse=True,
+    )
+    return candidates[:top_k]
+
+
 def build_source(row, chunk, score, show_text):
     source = {
         "score": float(score),
@@ -201,6 +251,18 @@ def build_source(row, chunk, score, show_text):
         source["text"] = chunk["text"]
 
     return source
+
+
+def classify_fact_confidence(sources, fact_terms):
+    if not sources:
+        return "none"
+
+    for source in sources:
+        matches = source.get("factMatches", {})
+        if matches.get("names") and matches.get("relations"):
+            return "medium"
+
+    return "none"
 
 
 def build_draft(confidence, sources, show_text):
@@ -227,6 +289,38 @@ def build_draft(confidence, sources, show_text):
     return (
         f"{opening} Hay {source_count} fuentes recuperadas ({date_span}). "
         "No incluyo texto privado en consola; revisa el JSON privado o vuelve a correr con --show-text si quieres inspeccionar contenido."
+    )
+
+
+def build_fact_draft(confidence, sources, fact_terms):
+    names = ", ".join(fact_terms["names"]) or "el nombre consultado"
+    relations = ", ".join(fact_terms["relations"]) or "la relacion consultada"
+    if confidence == "none":
+        return (
+            f"No encontre evidencia directa que una {relations} con {names}. "
+            f"Hay {len(sources)} fuentes lexicas relacionadas, pero no alcanzan para afirmar el dato."
+        )
+
+    return (
+        f"Encontre fuentes relacionadas con {names} y {relations}, pero esta respuesta debe mantenerse cautelosa "
+        "si la relacion no aparece declarada de forma explicita."
+    )
+
+
+def build_fact_reply(confidence, sources, fact_terms):
+    display_name = display_fact_name(fact_terms)
+    display_relation = display_fact_relation(fact_terms)
+    if confidence == "none":
+        if sources:
+            return (
+                f"No puedo confirmarlo con seguridad. Encuentro menciones a {display_name}, "
+                f"pero no una fuente directa que diga que es {display_relation}."
+            )
+        return f"No encuentro una fuente clara para confirmar si {display_name} es {display_relation}."
+
+    return (
+        f"Lo tomaria con cautela: encontre menciones que relacionan a {display_name} con {display_relation}, "
+        "pero conviene revisar las fuentes antes de darlo por confirmado."
     )
 
 
@@ -513,6 +607,72 @@ def asks_recent_conversation(query):
         "me envie",
     ]
     return any(trigger in query for trigger in triggers)
+
+
+def asks_identity_fact(query):
+    relation_terms = ["hijo", "hija", "hermano", "hermana", "marido", "esposo", "mama", "papa", "madre", "padre"]
+    identity_triggers = ["se llama", "llama", "es tu", "tu ", "tus "]
+    return any(term in query for term in relation_terms) and any(trigger in query for trigger in identity_triggers)
+
+
+def extract_fact_terms(query):
+    relation_terms = ["hijo", "hija", "hermano", "hermana", "marido", "esposo", "mama", "papa", "madre", "padre"]
+    relations = [term for term in relation_terms if term in query]
+    stop_words = {
+        "hola",
+        "recordas",
+        "recuerdas",
+        "cual",
+        "como",
+        "quien",
+        "que",
+        "tus",
+        "tu",
+        "se",
+        "llama",
+        "llaman",
+        "es",
+        "son",
+        "fa",
+    }
+    names = [
+        word
+        for word in query.replace("?", " ").replace("¿", " ").split()
+        if len(word) > 3 and word not in stop_words and word not in relation_terms
+    ]
+    return {
+        "names": unique_items(names),
+        "relations": unique_items(relations),
+    }
+
+
+def relation_matches(relation, text):
+    if relation == "hijo":
+        return "hijo" in text or "hijos" in text
+    if relation == "hija":
+        return "hija" in text or "hijas" in text
+    return relation in text
+
+
+def display_fact_name(fact_terms):
+    return fact_terms["names"][0].capitalize() if fact_terms["names"] else "esa persona"
+
+
+def display_fact_relation(fact_terms):
+    if not fact_terms["relations"]:
+        return "esa relacion"
+    relation = fact_terms["relations"][0]
+    if relation in ["hijo", "hija"]:
+        return f"mi {relation}"
+    return relation
+
+
+def unique_items(items):
+    seen = []
+    for item in items:
+        if item not in seen:
+            seen.append(item)
+    return seen
 
 
 def asks_for_last_request(query):
