@@ -39,7 +39,7 @@ form.addEventListener("submit", async (event) => {
     const answer = await response.json();
     appendAnswer(answer);
     renderSources(answer.sources ?? []);
-    sourceSummary.textContent = `${answer.evidenceCount} fuentes - ${answer.confidence}`;
+    sourceSummary.textContent = `${answer.evidenceCount} fuentes - ${answer.confidence} - ${answer.retrievalMode ?? "semantic"}`;
   } catch (error) {
     appendMessage("assistant", "Sistema", "No pude completar la busqueda local.");
     sourceSummary.textContent = "Error";
@@ -53,7 +53,9 @@ function appendAnswer(answer) {
   const article = document.createElement("article");
   article.className = "bubble assistant";
   const reply = answer.reply || answer.draft || "No tengo una respuesta suficiente con las fuentes disponibles.";
-  const mode = answer.generationMode ? `Modo: ${answer.generationMode}` : "Modo: fallback";
+  const retrieval = answer.retrievalMode ?? "semantic";
+  const generation = answer.generationMode ?? "fallback";
+  const mode = `Busqueda: ${retrieval} - Respuesta: ${generation}`;
   article.innerHTML = `
     <div class="bubble-meta">Fabiana (sintesis con fuentes)</div>
     <p>${escapeHtml(reply)}</p>

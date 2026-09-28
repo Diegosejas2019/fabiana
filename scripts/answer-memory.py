@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import sys
+import unicodedata
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -49,55 +50,43 @@ def main():
     manifest = json.loads((index_dir / "embedding-manifest.json").read_text(encoding="utf-8"))
     model_name = args.model or manifest["model"]
 
-    embeddings = np.load(index_dir / "embeddings.npy")
     metadata = read_jsonl(index_dir / "embedding-metadata.jsonl")
     chunks_by_id = {chunk["id"]: chunk for chunk in read_jsonl(args.chunks)}
 
-    model = TextEmbedding(model_name=model_name)
-    query_vector = np.array(list(model.query_embed(args.query))[0], dtype=np.float32)
-    scores = cosine_scores(embeddings, query_vector)
-
-    candidates = []
-    for row, score in zip(metadata, scores):
-        if args.role and row["role"] != args.role:
-            continue
-        if args.source_type and row["sourceType"] != args.source_type:
-            continue
-
-        chunk = chunks_by_id[row["chunkId"]]
-        source = {
-            "score": float(score),
-            "chunkId": row["chunkId"],
-            "memoryId": row["memoryId"],
-            "messageId": row["messageId"],
-            "timestamp": row["timestamp"],
-            "localDate": row["localDate"],
-            "localTime": row["localTime"],
-            "role": row["role"],
-            "sourceType": row["sourceType"],
-            "textLength": row["textLength"],
-            "eligibleForPersona": row["eligibleForPersona"],
-            "evidence": row["evidence"],
-        }
-
-        if args.show_text:
-            source["text"] = chunk["text"]
-
-        candidates.append(source)
-
-    candidates.sort(key=lambda item: item["score"], reverse=True)
-    sources = candidates[: args.top_k]
-    confidence = classify_confidence(sources)
-    draft = build_draft(confidence, sources, args.show_text)
-    reply, generation_mode = build_persona_reply(
-        args.query,
-        confidence,
-        sources,
-        args.persona_name,
-        args.llm_provider,
-        args.ollama_model,
-        args.ollama_url,
-    )
+    if asks_recent_messages(normalize_for_match(args.query)):
+        retrieval_mode = "chronological"
+        include_conversation = asks_recent_conversation(normalize_for_match(args.query))
+        sources = build_recent_sources(
+            metadata,
+            chunks_by_id,
+            args.top_k,
+            args.role,
+            args.source_type,
+            args.show_text,
+            include_conversation,
+        )
+        confidence = "high" if sources else "none"
+        draft = build_recent_draft(confidence, sources, args.show_text)
+        reply = build_recent_reply(sources, args.show_text)
+        generation_mode = "chronological"
+    else:
+        retrieval_mode = "semantic"
+        embeddings = np.load(index_dir / "embeddings.npy")
+        model = TextEmbedding(model_name=model_name)
+        query_vector = np.array(list(model.query_embed(args.query))[0], dtype=np.float32)
+        scores = cosine_scores(embeddings, query_vector)
+        sources = build_semantic_sources(metadata, chunks_by_id, scores, args.top_k, args.role, args.source_type, args.show_text)
+        confidence = classify_confidence(sources)
+        draft = build_draft(confidence, sources, args.show_text)
+        reply, generation_mode = build_persona_reply(
+            args.query,
+            confidence,
+            sources,
+            args.persona_name,
+            args.llm_provider,
+            args.ollama_model,
+            args.ollama_url,
+        )
 
     answer = {
         "schemaVersion": 2,
@@ -107,6 +96,7 @@ def main():
         "roleFilter": args.role,
         "sourceTypeFilter": args.source_type,
         "confidence": confidence,
+        "retrievalMode": retrieval_mode,
         "reply": reply,
         "generationMode": generation_mode,
         "draft": draft,
@@ -125,6 +115,7 @@ def main():
                 "schemaVersion": answer["schemaVersion"],
                 "query": answer["query"],
                 "confidence": answer["confidence"],
+                "retrievalMode": answer["retrievalMode"],
                 "reply": answer["reply"],
                 "generationMode": answer["generationMode"],
                 "draft": answer["draft"],
@@ -154,6 +145,59 @@ def classify_confidence(sources):
     return "none"
 
 
+def build_semantic_sources(metadata, chunks_by_id, scores, top_k, role, source_type, show_text):
+    candidates = []
+    for row, score in zip(metadata, scores):
+        if role and row["role"] != role:
+            continue
+        if source_type and row["sourceType"] != source_type:
+            continue
+
+        candidates.append(build_source(row, chunks_by_id[row["chunkId"]], float(score), show_text))
+
+    candidates.sort(key=lambda item: item["score"], reverse=True)
+    return candidates[:top_k]
+
+
+def build_recent_sources(metadata, chunks_by_id, top_k, role, source_type, show_text, include_conversation):
+    candidates = []
+    for row in metadata:
+        if source_type and row["sourceType"] != source_type:
+            continue
+        if role and not include_conversation and row["role"] != role:
+            continue
+        candidates.append(row)
+
+    candidates.sort(key=lambda item: (item.get("timestamp") or "", item.get("messageId") or ""), reverse=True)
+    sources = []
+    for index, row in enumerate(candidates[:top_k], start=1):
+        score = max(0.0, 1.0 - ((index - 1) * 0.001))
+        sources.append(build_source(row, chunks_by_id[row["chunkId"]], score, show_text))
+    return sources
+
+
+def build_source(row, chunk, score, show_text):
+    source = {
+        "score": float(score),
+        "chunkId": row["chunkId"],
+        "memoryId": row["memoryId"],
+        "messageId": row["messageId"],
+        "timestamp": row["timestamp"],
+        "localDate": row["localDate"],
+        "localTime": row["localTime"],
+        "role": row["role"],
+        "sourceType": row["sourceType"],
+        "textLength": row["textLength"],
+        "eligibleForPersona": row["eligibleForPersona"],
+        "evidence": row["evidence"],
+    }
+
+    if show_text:
+        source["text"] = chunk["text"]
+
+    return source
+
+
 def build_draft(confidence, sources, show_text):
     if confidence == "none":
         return (
@@ -179,6 +223,43 @@ def build_draft(confidence, sources, show_text):
         f"{opening} Hay {source_count} fuentes recuperadas ({date_span}). "
         "No incluyo texto privado en consola; revisa el JSON privado o vuelve a correr con --show-text si quieres inspeccionar contenido."
     )
+
+
+def build_recent_draft(confidence, sources, show_text):
+    if confidence == "none":
+        return "No encontre mensajes fechados para ordenar cronologicamente."
+
+    date_span = summarize_dates(sources)
+    if show_text:
+        return f"Use orden cronologico directo. Hay {len(sources)} mensajes recientes recuperados ({date_span})."
+
+    return (
+        f"Use orden cronologico directo. Hay {len(sources)} mensajes recientes recuperados ({date_span}). "
+        "No incluyo texto privado en consola sin --show-text."
+    )
+
+
+def build_recent_reply(sources, show_text):
+    if not sources:
+        return "No me aparecen mensajes recientes suficientes para responderte con fecha."
+
+    if not show_text:
+        return (
+            f"Lo ultimo que encuentro esta fechado el {sources[0]['localDate']} a las {sources[0]['localTime']}. "
+            "Para ver el contenido exacto, abri la respuesta en la app o usa --show-text."
+        )
+
+    chronological = sorted(sources, key=lambda item: (item.get("timestamp") or "", item.get("messageId") or ""))
+    latest = sources[0]
+    lines = [
+        f"Lo ultimo que encuentro en el chat es del {latest['localDate']} a las {latest['localTime']}.",
+        "En orden cronologico, los mensajes mas recientes son:",
+    ]
+    for source in chronological:
+        speaker = "Fabiana" if source["role"] == "targetPerson" else "Diego" if source["role"] == "self" else source["role"]
+        text = clean_source_text(source.get("text", ""))
+        lines.append(f"- {source['localDate']} {source['localTime']} - {speaker}: {text}")
+    return "\n".join(lines)
 
 
 def build_persona_reply(query, confidence, sources, persona_name, llm_provider, ollama_model, ollama_url):
@@ -289,6 +370,35 @@ def asks_for_encouragement(query):
     return any(trigger in query for trigger in triggers)
 
 
+def asks_recent_messages(query):
+    triggers = [
+        "ultimo mensaje",
+        "ultimos mensaje",
+        "ultimos mensajes",
+        "ultimo que",
+        "lo ultimo",
+        "mas reciente",
+        "reciente",
+        "que hablamos",
+        "conversacion reciente",
+        "orden cronologico",
+    ]
+    return any(trigger in query for trigger in triggers)
+
+
+def asks_recent_conversation(query):
+    triggers = [
+        "con mi hermana",
+        "con fabiana",
+        "que hablamos",
+        "conversacion",
+        "nos enviamos",
+        "me envie con",
+        "me envie",
+    ]
+    return any(trigger in query for trigger in triggers)
+
+
 def asks_for_last_request(query):
     triggers = ["ultimo", "pediste", "me pediste", "lo ultimo"]
     return any(trigger in query for trigger in triggers)
@@ -353,9 +463,8 @@ def clean_source_text(text):
 
 
 def normalize_for_match(text):
-    lowered = text.lower()
-    replacements = str.maketrans("áéíóúüñ", "aeiouun")
-    return lowered.translate(replacements)
+    normalized = unicodedata.normalize("NFD", text.lower())
+    return "".join(character for character in normalized if unicodedata.category(character) != "Mn")
 
 
 def shorten(text, limit):
