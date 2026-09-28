@@ -93,3 +93,18 @@ npm run memory:chunk -- data/processed/memory/memories.jsonl data/processed/memo
 ```
 
 Esto genera `chunks.jsonl` y `chunk-manifest.json`.
+
+Para crear embeddings locales:
+
+```bash
+npm run rag:embed -- --chunks data/processed/memory/chunks.jsonl --output-dir data/processed/rag
+```
+
+Para buscar recuerdos:
+
+```bash
+npm run rag:search -- --query "vacaciones en Cordoba" --chunks data/processed/memory/chunks.jsonl --index-dir data/processed/rag --top-k 8
+```
+
+Por defecto la búsqueda no imprime texto privado; agrega `--show-text` si quieres inspeccionar resultados.
+Puedes filtrar con `--role targetPerson` y `--source-type audio_transcript`.

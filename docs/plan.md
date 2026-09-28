@@ -53,6 +53,7 @@ Objetivo: importar WhatsApp, reconocer autores, vincular multimedia y permitir c
 
 - Memoria normalizada con mensajes escritos y audios transcritos.
 - Chunking para embeddings/RAG.
+- Embeddings locales e índice vectorial.
 - Sistema anti-alucinaciones.
 - Interfaz tipo chat.
 - Estilo personal.
