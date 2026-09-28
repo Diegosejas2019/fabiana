@@ -1,5 +1,9 @@
 import argparse
 import json
+import os
+import sys
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -7,8 +11,12 @@ import numpy as np
 from fastembed import TextEmbedding
 
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Build a grounded answer draft from local memory.")
+    parser = argparse.ArgumentParser(description="Build a grounded persona answer from local memory.")
     parser.add_argument("--query", required=True, help="User question")
     parser.add_argument("--chunks", required=True, help="Path to chunks.jsonl")
     parser.add_argument("--index-dir", required=True, help="Directory containing embeddings.npy")
@@ -18,6 +26,23 @@ def main():
     parser.add_argument("--role", default="targetPerson", help="Role filter")
     parser.add_argument("--source-type", default=None, help="Optional source type filter")
     parser.add_argument("--show-text", action="store_true", help="Include private source text in output")
+    parser.add_argument("--persona-name", default="Fabi", help="Name to use for persona replies")
+    parser.add_argument(
+        "--llm-provider",
+        default=os.environ.get("ANSWER_LLM_PROVIDER", "auto"),
+        choices=["auto", "none", "ollama"],
+        help="Generative engine for persona replies",
+    )
+    parser.add_argument(
+        "--ollama-model",
+        default=os.environ.get("OLLAMA_MODEL", "llama3.2"),
+        help="Ollama model used when local generation is enabled",
+    )
+    parser.add_argument(
+        "--ollama-url",
+        default=os.environ.get("OLLAMA_URL", "http://localhost:11434/api/chat"),
+        help="Ollama chat API URL",
+    )
     args = parser.parse_args()
 
     index_dir = Path(args.index_dir)
@@ -64,15 +89,26 @@ def main():
     sources = candidates[: args.top_k]
     confidence = classify_confidence(sources)
     draft = build_draft(confidence, sources, args.show_text)
+    reply, generation_mode = build_persona_reply(
+        args.query,
+        confidence,
+        sources,
+        args.persona_name,
+        args.llm_provider,
+        args.ollama_model,
+        args.ollama_url,
+    )
 
     answer = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "generatedAt": now_iso(),
         "query": args.query,
         "model": model_name,
         "roleFilter": args.role,
         "sourceTypeFilter": args.source_type,
         "confidence": confidence,
+        "reply": reply,
+        "generationMode": generation_mode,
         "draft": draft,
         "evidenceCount": len(sources),
         "sources": sources,
@@ -86,8 +122,11 @@ def main():
     print(
         json.dumps(
             {
+                "schemaVersion": answer["schemaVersion"],
                 "query": answer["query"],
                 "confidence": answer["confidence"],
+                "reply": answer["reply"],
+                "generationMode": answer["generationMode"],
                 "draft": answer["draft"],
                 "evidenceCount": answer["evidenceCount"],
                 "topScore": sources[0]["score"] if sources else None,
@@ -142,6 +181,189 @@ def build_draft(confidence, sources, show_text):
     )
 
 
+def build_persona_reply(query, confidence, sources, persona_name, llm_provider, ollama_model, ollama_url):
+    if confidence == "none":
+        return (
+            "No tengo un recuerdo claro de eso en lo que guardaste. "
+            "No quiero inventarte algo que no aparece en mis mensajes."
+        ), "fallback"
+
+    source_texts = [source.get("text", "").strip() for source in sources if source.get("text")]
+    dates = [source["localDate"] for source in sources if source.get("localDate")]
+    top_text = clean_source_text(source_texts[0]) if source_texts else ""
+    second_text = clean_source_text(source_texts[1]) if len(source_texts) > 1 else ""
+    lower_query = normalize_for_match(query)
+
+    if llm_provider in ("auto", "ollama") and source_texts:
+        generated = build_ollama_reply(query, sources, persona_name, ollama_model, ollama_url)
+        if generated:
+            return generated, f"ollama:{ollama_model}"
+
+    if asks_for_encouragement(lower_query):
+        return build_encouragement_reply(persona_name, top_text, second_text), "fallback"
+
+    if asks_for_last_request(lower_query):
+        return build_last_request_reply(dates, top_text), "fallback"
+
+    if asks_memory_question(lower_query):
+        return build_memory_reply(top_text, second_text, dates), "fallback"
+
+    return build_general_reply(top_text, second_text, dates), "fallback"
+
+
+def build_ollama_reply(query, sources, persona_name, model, url):
+    prompt_sources = format_sources_for_prompt(sources)
+    if not prompt_sources:
+        return None
+
+    system_prompt = (
+        "Sos un motor de redaccion para una app privada de memoria familiar. "
+        f"Redacta como {persona_name}: cercana, simple, afectuosa y natural. "
+        "Usa los mensajes recuperados como fuente de hechos y como guia de estilo. "
+        "Podes inventar frases nuevas y tono conversacional, pero no inventes recuerdos, hechos, pedidos, promesas ni fechas. "
+        "Si la evidencia no alcanza, decilo suavemente. "
+        "No digas que sos IA, no menciones IDs tecnicos y no copies mensajes largos literalmente. "
+        "Responde en primera persona, en espanol rioplatense natural, con 1 a 4 frases."
+    )
+    user_prompt = (
+        f"Pregunta de Diego:\n{query}\n\n"
+        "Mensajes/transcripciones recuperados de Fabiana:\n"
+        f"{prompt_sources}\n\n"
+        "Escribi una respuesta final nueva, como si Fabiana le respondiera ahora, manteniendote fiel a esas fuentes."
+    )
+    payload = {
+        "model": model,
+        "stream": False,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "options": {
+            "temperature": 0.72,
+            "top_p": 0.9,
+            "num_predict": 180,
+        },
+    }
+
+    try:
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=60) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+        return None
+
+    content = result.get("message", {}).get("content", "").strip()
+    return clean_generated_reply(content)
+
+
+def format_sources_for_prompt(sources):
+    rows = []
+    for index, source in enumerate(sources[:8], start=1):
+        text = clean_source_text(source.get("text", ""))
+        if not text:
+            continue
+        date = source.get("localDate") or "sin fecha"
+        source_type = source.get("sourceType") or "fuente"
+        rows.append(f"{index}. {date} ({source_type}): {shorten(text, 520)}")
+    return "\n".join(rows)
+
+
+def clean_generated_reply(content):
+    if not content:
+        return None
+    cleaned = content.strip().strip("\"'")
+    cleaned = cleaned.replace("\r\n", "\n").replace("\r", "\n")
+    cleaned = "\n".join(line.strip() for line in cleaned.split("\n") if line.strip())
+    if not cleaned:
+        return None
+    return shorten(cleaned, 900)
+
+
+def asks_for_encouragement(query):
+    triggers = ["empezar bien", "semana", "consejo", "decime algo", "animo"]
+    return any(trigger in query for trigger in triggers)
+
+
+def asks_for_last_request(query):
+    triggers = ["ultimo", "pediste", "me pediste", "lo ultimo"]
+    return any(trigger in query for trigger in triggers)
+
+
+def asks_memory_question(query):
+    triggers = ["te acordas", "recordas", "acordas"]
+    return any(trigger in query for trigger in triggers)
+
+
+def build_encouragement_reply(persona_name, top_text, second_text):
+    detail = top_text or second_text
+    if detail:
+        return (
+            f"Hola, soy {persona_name}. Arranca la semana de a poquito, sin cargarte todo encima. "
+            f"Me quedo cerca de esto que aparece en mis recuerdos: \"{shorten(detail, 180)}\". "
+            "Hace una cosa por vez, come algo rico, respira, y no te olvides de que podes."
+        )
+
+    return (
+        f"Hola, soy {persona_name}. Arranca tranqui, una cosa por vez. "
+        "No tengo un recuerdo concreto para apoyarme, pero te diria que no te apures y que te cuides."
+    )
+
+
+def build_last_request_reply(dates, top_text):
+    if not top_text:
+        return "No encuentro un pedido claro en los recuerdos recuperados. No quiero inventarte uno."
+
+    date_part = f"Lo mas cercano que encuentro es del {dates[0]}. " if dates else ""
+    return f"{date_part}Me aparece esto: \"{shorten(top_text, 220)}\". Eso es lo que puedo decirte con fuente."
+
+
+def build_memory_reply(top_text, second_text, dates):
+    if not top_text:
+        return "No me aparece un recuerdo suficientemente claro de eso."
+
+    date_part = f"Me aparece por aca, cerca del {dates[0]}, " if dates else "Me aparece por aca "
+    reply = f"Si, {date_part}algo relacionado con esto: \"{shorten(top_text, 220)}\"."
+
+    if second_text:
+        reply += f" Tambien hay otro recuerdo que va por aca: \"{shorten(second_text, 160)}\"."
+
+    return reply
+
+
+def build_general_reply(top_text, second_text, dates):
+    if not top_text:
+        return "No tengo suficiente recuerdo concreto para contestarte bien."
+
+    date_part = f"En lo que aparece del {dates[0]}, " if dates else "En lo que aparece, "
+    reply = f"{date_part}yo te diria esto: \"{shorten(top_text, 220)}\"."
+
+    if second_text:
+        reply += f" Y tambien me aparece: \"{shorten(second_text, 140)}\"."
+
+    return reply
+
+
+def clean_source_text(text):
+    return " ".join(text.split())
+
+
+def normalize_for_match(text):
+    lowered = text.lower()
+    replacements = str.maketrans("áéíóúüñ", "aeiouun")
+    return lowered.translate(replacements)
+
+
+def shorten(text, limit):
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
+
+
 def summarize_dates(sources):
     dates = [source["localDate"] for source in sources if source.get("localDate")]
     if not dates:
@@ -172,4 +394,3 @@ def now_iso():
 
 if __name__ == "__main__":
     main()
-

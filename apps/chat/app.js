@@ -39,9 +39,9 @@ form.addEventListener("submit", async (event) => {
     const answer = await response.json();
     appendAnswer(answer);
     renderSources(answer.sources ?? []);
-    sourceSummary.textContent = `${answer.evidenceCount} fuentes · ${answer.confidence}`;
+    sourceSummary.textContent = `${answer.evidenceCount} fuentes - ${answer.confidence}`;
   } catch (error) {
-    appendMessage("assistant", "Sistema", "No pude completar la búsqueda local.");
+    appendMessage("assistant", "Sistema", "No pude completar la busqueda local.");
     sourceSummary.textContent = "Error";
     console.error(error);
   } finally {
@@ -52,9 +52,12 @@ form.addEventListener("submit", async (event) => {
 function appendAnswer(answer) {
   const article = document.createElement("article");
   article.className = "bubble assistant";
+  const reply = answer.reply || answer.draft || "No tengo una respuesta suficiente con las fuentes disponibles.";
+  const mode = answer.generationMode ? `Modo: ${answer.generationMode}` : "Modo: fallback";
   article.innerHTML = `
-    <div class="bubble-meta">Memoria AI</div>
-    <p>${escapeHtml(answer.draft)}</p>
+    <div class="bubble-meta">Fabiana (sintesis con fuentes)</div>
+    <p>${escapeHtml(reply)}</p>
+    <div class="bubble-note">${escapeHtml(mode)}</div>
     <span class="confidence ${answer.confidence}">${answer.confidence}</span>
   `;
   messages.append(article);
@@ -89,10 +92,10 @@ function renderSources(rows) {
     item.innerHTML = `
       <summary>
         <div class="source-title">
-          <span>${escapeHtml(row.localDate)} · ${escapeHtml(row.sourceType)}</span>
+          <span>${escapeHtml(row.localDate)} - ${escapeHtml(row.sourceType)}</span>
           <span>${row.score.toFixed(3)}</span>
         </div>
-        <div class="source-meta">${escapeHtml(row.messageId)} · ${escapeHtml(row.role)}</div>
+        <div class="source-meta">${escapeHtml(row.messageId)} - ${escapeHtml(row.role)}</div>
       </summary>
       <div class="source-body">${escapeHtml(row.text ?? "Texto no incluido.")}</div>
     `;

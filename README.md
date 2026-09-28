@@ -109,13 +109,29 @@ npm run rag:search -- --query "vacaciones en Cordoba" --chunks data/processed/me
 Por defecto la búsqueda no imprime texto privado; agrega `--show-text` si quieres inspeccionar resultados.
 Puedes filtrar con `--role targetPerson` y `--source-type audio_transcript`.
 
-Para preparar un borrador de respuesta con fuentes:
+Para preparar una respuesta con fuentes:
 
 ```bash
 npm run answer:draft -- --query "te acordas de Cordoba?" --chunks data/processed/memory/chunks.jsonl --index-dir data/processed/rag --output data/processed/answers/cordoba.json
 ```
 
-El borrador clasifica la evidencia y guarda fuentes. Por defecto no imprime texto privado en consola.
+El motor clasifica la evidencia, guarda fuentes y devuelve `reply` como respuesta sintetizada de persona. `draft` queda como diagnostico tecnico.
+Por defecto no imprime texto privado en consola.
+
+Si Ollama esta disponible en `http://localhost:11434`, el motor intenta usar un LLM local para redactar `reply` con los mensajes recuperados como hechos y guia de estilo. Si no hay Ollama o el modelo no responde, vuelve al generador local `fallback`.
+
+Modelos locales sugeridos:
+
+```powershell
+ollama run llama3.2
+```
+
+Tambien puedes probar `qwen2.5` o `gemma3` cambiando el modelo:
+
+```powershell
+$env:OLLAMA_MODEL="qwen2.5"
+npm run chat:local
+```
 
 Para abrir la interfaz local:
 

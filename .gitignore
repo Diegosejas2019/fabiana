@@ -10,3 +10,5 @@ data/media/
 
 *.log
 *.tmp
+__pycache__/
+*.pyc

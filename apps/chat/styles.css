@@ -131,6 +131,12 @@ select {
   background: #fff;
 }
 
+.bubble-note {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .confidence {
   display: inline-flex;
   align-items: center;
