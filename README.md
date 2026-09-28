@@ -116,3 +116,11 @@ npm run answer:draft -- --query "te acordas de Cordoba?" --chunks data/processed
 ```
 
 El borrador clasifica la evidencia y guarda fuentes. Por defecto no imprime texto privado en consola.
+
+Para abrir la interfaz local:
+
+```bash
+npm run chat:local
+```
+
+Luego abre `http://localhost:4173`.

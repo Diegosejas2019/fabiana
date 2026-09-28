@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Memoria AI</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="chat-pane" aria-label="Chat">
+        <header class="topbar">
+          <div>
+            <h1>Memoria AI</h1>
+            <p id="statusText">Local</p>
+          </div>
+          <div class="controls">
+            <label>
+              Rol
+              <select id="roleSelect">
+                <option value="targetPerson">Fabiana</option>
+                <option value="">Todos</option>
+                <option value="self">Diego</option>
+              </select>
+            </label>
+            <label>
+              Fuente
+              <select id="sourceSelect">
+                <option value="">Todas</option>
+                <option value="whatsapp_text">Texto</option>
+                <option value="audio_transcript">Audio</option>
+              </select>
+            </label>
+          </div>
+        </header>
+
+        <div id="messages" class="messages" aria-live="polite">
+          <article class="bubble assistant">
+            <div class="bubble-meta">Sistema</div>
+            <p>Preguntá algo y voy a buscar recuerdos reales con fuentes.</p>
+          </article>
+        </div>
+
+        <form id="askForm" class="composer">
+          <textarea id="queryInput" rows="2" placeholder="Escribí una pregunta" required></textarea>
+          <button id="askButton" type="submit">Buscar</button>
+        </form>
+      </section>
+
+      <aside class="sources-pane" aria-label="Fuentes">
+        <header>
+          <h2>Recuerdos usados</h2>
+          <p id="sourceSummary">Sin consulta</p>
+        </header>
+        <div id="sources" class="sources"></div>
+      </aside>
+    </main>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
