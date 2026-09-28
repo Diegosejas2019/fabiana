@@ -1,0 +1,12 @@
+node_modules/
+.env
+.env.*
+
+data/raw/
+data/processed/
+data/transcripts/
+data/media/
+
+*.log
+*.tmp
+
