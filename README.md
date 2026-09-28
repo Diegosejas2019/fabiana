@@ -108,3 +108,11 @@ npm run rag:search -- --query "vacaciones en Cordoba" --chunks data/processed/me
 
 Por defecto la búsqueda no imprime texto privado; agrega `--show-text` si quieres inspeccionar resultados.
 Puedes filtrar con `--role targetPerson` y `--source-type audio_transcript`.
+
+Para preparar un borrador de respuesta con fuentes:
+
+```bash
+npm run answer:draft -- --query "te acordas de Cordoba?" --chunks data/processed/memory/chunks.jsonl --index-dir data/processed/rag --output data/processed/answers/cordoba.json
+```
+
+El borrador clasifica la evidencia y guarda fuentes. Por defecto no imprime texto privado en consola.

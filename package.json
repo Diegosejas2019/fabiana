@@ -16,7 +16,8 @@
     "memory:build": "node packages/whatsapp-parser/src/cli.js memory-build",
     "memory:chunk": "node packages/whatsapp-parser/src/cli.js memory-chunk",
     "rag:embed": ".venv\\Scripts\\python.exe scripts\\embed-memory-chunks.py",
-    "rag:search": ".venv\\Scripts\\python.exe scripts\\search-memory.py"
+    "rag:search": ".venv\\Scripts\\python.exe scripts\\search-memory.py",
+    "answer:draft": ".venv\\Scripts\\python.exe scripts\\answer-memory.py"
   },
   "workspaces": [
     "packages/*"
