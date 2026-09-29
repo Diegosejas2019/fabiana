@@ -50,6 +50,26 @@
     }
   },
   {
+    "id": "contextual-pronoun-resolves-leandro",
+    "query": "decime algo acerca de el",
+    "history": [
+      {
+        "role": "user",
+        "content": "te acordas de tu hijo leandro?"
+      },
+      {
+        "role": "assistant",
+        "content": "Si, die, Leandro es mi hijo."
+      }
+    ],
+    "expect": {
+      "validationStatusIn": ["ok"],
+      "generationModeIn": ["profile-person-check"],
+      "replyIncludes": ["leandro", "mi hijo", "18"],
+      "replyExcludes": ["todos los dias", "agradecer", "no tengo suficiente"]
+    }
+  },
+  {
     "id": "movie-genre-confirmed-preference",
     "query": "cual es tu genero de cine favorito?",
     "expect": {

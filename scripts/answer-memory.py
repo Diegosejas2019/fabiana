@@ -62,7 +62,8 @@ def main():
     metadata = read_jsonl(index_dir / "embedding-metadata.jsonl")
     chunks_by_id = {chunk["id"]: chunk for chunk in read_jsonl(args.chunks)}
 
-    normalized_query = normalize_for_match(args.query)
+    effective_query = resolve_contextual_query(args.query, conversation_history, deep_profile)
+    normalized_query = normalize_for_match(effective_query)
     fact_terms = None
 
     if asks_recent_messages(normalized_query):
@@ -94,13 +95,13 @@ def main():
         retrieval_mode = "semantic"
         embeddings = np.load(index_dir / "embeddings.npy")
         model = TextEmbedding(model_name=model_name)
-        query_vector = np.array(list(model.query_embed(args.query))[0], dtype=np.float32)
+        query_vector = np.array(list(model.query_embed(effective_query))[0], dtype=np.float32)
         scores = cosine_scores(embeddings, query_vector)
         sources = build_semantic_sources(metadata, chunks_by_id, scores, args.top_k, args.role, args.source_type, args.show_text, normalized_query)
         confidence = classify_confidence(sources)
         draft = build_draft(confidence, sources, args.show_text)
         reply, generation_mode = build_persona_reply(
-            args.query,
+            effective_query,
             confidence,
             sources,
             args.persona_name,
@@ -794,6 +795,10 @@ def build_persona_reply(query, confidence, sources, persona_name, llm_provider, 
     if health_reply:
         return health_reply, "health-context-check"
 
+    person_reply = build_profile_person_reply(lower_query, deep_profile)
+    if person_reply:
+        return person_reply, "profile-person-check"
+
     if llm_provider in ("auto", "ollama") and source_texts:
         generated = build_ollama_reply(query, sources, persona_name, ollama_model, ollama_url, style_profile, deep_profile, feedback_examples, conversation_history)
         if generated:
@@ -970,6 +975,85 @@ def read_optional_history(raw_history):
         if role in ["user", "assistant"] and content:
             history.append({"role": role, "content": shorten(content, 500)})
     return history
+
+
+def resolve_contextual_query(query, history, deep_profile):
+    normalized_query = normalize_for_match(query)
+    if not needs_context_resolution(normalized_query):
+        return query
+
+    referenced_name = find_recent_profile_name(history, deep_profile)
+    if not referenced_name:
+        return query
+
+    return f"{query} {referenced_name}"
+
+
+def needs_context_resolution(query):
+    triggers = [
+        "acerca de el",
+        "sobre el",
+        "de el",
+        "acerca de ella",
+        "sobre ella",
+        "de ella",
+        "acerca de eso",
+        "sobre eso",
+        "de eso",
+        "contame mas",
+        "decime mas",
+    ]
+    return any(trigger in query for trigger in triggers)
+
+
+def find_recent_profile_name(history, deep_profile):
+    names = profile_known_names(deep_profile)
+    if not names:
+        return None
+
+    for row in reversed(history[-6:]):
+        content = normalize_for_match(row.get("content", ""))
+        for name in names:
+            if contains_word(content, normalize_for_match(name)):
+                return name
+    return None
+
+
+def profile_known_names(deep_profile):
+    if not deep_profile:
+        return []
+
+    candidates = []
+    for relation in deep_profile.get("relationshipMap", {}).get("relationships", []):
+        for key in ["subject", "object"]:
+            value = str(relation.get(key) or "").strip()
+            if is_profile_name_candidate(value):
+                candidates.append(value)
+
+    for highlight in deep_profile.get("biography", {}).get("highlights", []):
+        text = str(highlight.get("text") or "")
+        for match in re.findall(r"\b[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\b", text):
+            if is_profile_name_candidate(match):
+                candidates.append(match)
+
+    return unique_items(candidates)
+
+
+def is_profile_name_candidate(value):
+    if not value:
+        return False
+    normalized = normalize_for_match(value)
+    blocked = {
+        "fabiana",
+        "diego",
+        "sejas",
+        "usar",
+        "buenas",
+        "quiero",
+        "gracias",
+        "durante",
+    }
+    return len(normalized) > 2 and normalized not in blocked and re.match(r"^[a-z]+$", normalized) is not None
 
 
 def format_feedback_for_prompt(examples):
@@ -1500,6 +1584,102 @@ def find_profile_health_facts(deep_profile):
                 "sourceType": "user_assertion",
             })
     return rows
+
+
+def build_profile_person_reply(query, deep_profile):
+    if not asks_profile_person_context(query):
+        return None
+
+    facts = find_profile_person_facts(query, deep_profile)
+    if not facts:
+        return None
+
+    fact = facts[0]
+    name = fact["name"]
+    text = fact["text"]
+    normalized = normalize_for_match(text)
+    age = extract_age_from_text(normalized)
+
+    if "hijo de fabiana" in normalized:
+        suffix = f" Tiene {age} años." if age else ""
+        return f"Si, die, {name} es mi hijo.{suffix}"
+    if "hija de fabiana" in normalized:
+        suffix = f" Tiene {age} años." if age else ""
+        return f"Si, die, {name} es mi hija.{suffix}"
+    if "hermano" in normalized and "fabiana" in normalized:
+        return f"Si, die, {name} es mi hermano."
+
+    rewritten = rewrite_profile_fact_first_person(text)
+    if rewritten:
+        return f"Si, die, {rewritten}"
+
+    return None
+
+
+def asks_profile_person_context(query):
+    triggers = [
+        "acerca de",
+        "sobre",
+        "contame de",
+        "contame algo",
+        "decime algo",
+        "quien es",
+        "quien era",
+        "recordas a",
+        "te acordas de",
+    ]
+    return any(trigger in query for trigger in triggers)
+
+
+def find_profile_person_facts(query, deep_profile):
+    if not deep_profile:
+        return []
+
+    names = profile_known_names(deep_profile)
+    matched_names = [
+        name
+        for name in names
+        if contains_word(query, normalize_for_match(name))
+    ]
+    if not matched_names:
+        return []
+
+    rows = []
+    highlights = deep_profile.get("biography", {}).get("highlights", [])
+    for name in matched_names:
+        normalized_name = normalize_for_match(name)
+        for highlight in highlights:
+            text = clean_source_text(highlight.get("text", ""))
+            normalized_text = normalize_for_match(text)
+            if contains_word(normalized_text, normalized_name):
+                rows.append({
+                    "name": name,
+                    "text": text,
+                })
+
+    return rows
+
+
+def extract_age_from_text(normalized_text):
+    match = re.search(r"tiene\s+(\d{1,3})\s+anos", normalized_text)
+    return match.group(1) if match else None
+
+
+def rewrite_profile_fact_first_person(text):
+    cleaned = clean_source_text(text).rstrip(".")
+    replacements = [
+        ("Fabiana tenía", "yo tenia"),
+        ("Fabiana tenia", "yo tenia"),
+        ("Fabiana tiene", "yo tengo"),
+        ("Fabiana era", "yo era"),
+        ("Fabiana es", "yo soy"),
+        (" de Fabiana", " mio"),
+    ]
+    for old, new in replacements:
+        cleaned = cleaned.replace(old, new)
+    if "Fabiana" in cleaned:
+        return None
+    return cleaned + "."
 
 
 def asks_preference_question(query):

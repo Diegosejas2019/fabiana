@@ -79,6 +79,9 @@ function runCase(testCase, chunksPath, indexDir) {
   if (existsSync(deepProfilePath)) {
     args.push("--deep-profile", deepProfilePath);
   }
+  if (Array.isArray(testCase.history) && testCase.history.length > 0) {
+    args.push("--history-json", JSON.stringify(testCase.history));
+  }
 
   const child = spawnSync(pythonPath, args, {
     cwd: root,
