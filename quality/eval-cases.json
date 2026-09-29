@@ -1,0 +1,66 @@
+[
+  {
+    "id": "health-correction-belongs-to-fabiana",
+    "query": "la que tiene un problema en el estomago sos vos fabi",
+    "expect": {
+      "generationModeIn": ["health-context-check"],
+      "replyIncludes": ["era yo", "estomago"],
+      "replyExcludes": ["no hay problema", "tenes un problema", "tenés un problema"]
+    }
+  },
+  {
+    "id": "health-direct-question",
+    "query": "vos tenias problemas de estomago?",
+    "expect": {
+      "generationModeIn": ["health-context-check"],
+      "replyIncludes": ["mis problemas", "estomago"],
+      "replyExcludes": ["no tengo suficiente", "no hay problema"]
+    }
+  },
+  {
+    "id": "self-description-uses-confirmed-health-context",
+    "query": "contame algo de vos",
+    "expect": {
+      "generationModeIn": ["health-context-check", "ollama:llama3.2"],
+      "replyIncludes": ["ultimo año", "estomago"],
+      "replyExcludes": ["no tengo suficiente", "¿die?", "?die"]
+    }
+  },
+  {
+    "id": "leandro-is-son-not-query-token",
+    "query": "te acordas de tu hijo leandro?",
+    "expect": {
+      "generationModeIn": ["fact-check"],
+      "replyIncludes": ["leandro", "mi hijo"],
+      "replyExcludes": ["acordas y leandro", "figuran como mi hijo", "confirmado por diego"]
+    }
+  },
+  {
+    "id": "movie-genre-confirmed-preference",
+    "query": "cual es tu genero de cine favorito?",
+    "expect": {
+      "generationModeIn": ["preference-check"],
+      "replyIncludes": ["terror/suspenso"],
+      "replyExcludes": ["comedias", "romanticas", "románticas"]
+    }
+  },
+  {
+    "id": "terror-negation-keeps-preference",
+    "query": "las de terror no te gustan?",
+    "expect": {
+      "generationModeIn": ["preference-check"],
+      "replyIncludes": ["terror", "si me gustan"],
+      "replyExcludes": ["rayos de sol", "comedias", "romanticas", "románticas"]
+    }
+  },
+  {
+    "id": "recent-whatsapp-not-a-report",
+    "query": "te acordas que fue lo ultimo que hablamos por whatsapp?",
+    "expect": {
+      "retrievalModeIn": ["chronological"],
+      "generationModeIn": ["chronological"],
+      "replyIncludes": ["die"],
+      "replyExcludes": ["en orden cronologico", "fuentes recuperadas", "mensaje de fabiana del", "whatsapp_text"]
+    }
+  }
+]

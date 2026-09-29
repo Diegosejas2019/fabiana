@@ -22,6 +22,14 @@ La IA, embeddings, transcripción y voz quedan fuera del primer bloque.
 npm test
 ```
 
+Para correr la evaluacion de calidad conversacional:
+
+```bash
+npm run quality:evaluate
+```
+
+Este comando prueba preguntas sensibles contra la app real sin imprimir fuentes privadas en consola. Los detalles completos quedan en `data/processed/evaluations`, ignorado por git.
+
 Para resumir un export ya extraído:
 
 ```bash

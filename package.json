@@ -24,6 +24,7 @@
     "rag:embed": ".venv\\Scripts\\python.exe scripts\\embed-memory-chunks.py",
     "rag:search": ".venv\\Scripts\\python.exe scripts\\search-memory.py",
     "answer:draft": ".venv\\Scripts\\python.exe scripts\\answer-memory.py",
+    "quality:evaluate": "node scripts/evaluate-answer-quality.js",
     "chat:local": "node scripts/local-chat-server.js"
   },
   "workspaces": [
