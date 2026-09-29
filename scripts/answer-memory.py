@@ -93,7 +93,7 @@ def main():
         model = TextEmbedding(model_name=model_name)
         query_vector = np.array(list(model.query_embed(args.query))[0], dtype=np.float32)
         scores = cosine_scores(embeddings, query_vector)
-        sources = build_semantic_sources(metadata, chunks_by_id, scores, args.top_k, args.role, args.source_type, args.show_text)
+        sources = build_semantic_sources(metadata, chunks_by_id, scores, args.top_k, args.role, args.source_type, args.show_text, normalized_query)
         confidence = classify_confidence(sources)
         draft = build_draft(confidence, sources, args.show_text)
         reply, generation_mode = build_persona_reply(
@@ -170,18 +170,184 @@ def classify_confidence(sources):
     return "none"
 
 
-def build_semantic_sources(metadata, chunks_by_id, scores, top_k, role, source_type, show_text):
+def build_semantic_sources(metadata, chunks_by_id, scores, top_k, role, source_type, show_text, query):
     candidates = []
+    latest_timestamp = latest_parseable_timestamp(metadata)
+    query_terms = extract_search_terms(query)
+    use_recent_boost = asks_recent_context(query)
+
     for row, score in zip(metadata, scores):
         if role and row["role"] != role:
             continue
         if source_type and row["sourceType"] != source_type:
             continue
 
-        candidates.append(build_source(row, chunks_by_id[row["chunkId"]], float(score), show_text))
+        chunk = chunks_by_id[row["chunkId"]]
+        lexical = lexical_match_score(query_terms, normalize_for_match(chunk.get("text", "")))
+        recency = recency_match_score(row, latest_timestamp) if use_recent_boost else 0.0
+        source_boost = source_type_boost(row, lexical, query)
+        hybrid_score = min(1.0, float(score) + lexical + recency + source_boost)
+        source = build_source(row, chunk, hybrid_score, show_text)
+        source["ranking"] = {
+            "mode": "hybrid",
+            "semanticScore": round(float(score), 6),
+            "lexicalBoost": round(lexical, 6),
+            "recencyBoost": round(recency, 6),
+            "sourceBoost": round(source_boost, 6),
+        }
+        candidates.append(source)
 
-    candidates.sort(key=lambda item: item["score"], reverse=True)
+    candidates.sort(
+        key=lambda item: (
+            item["score"],
+            item.get("ranking", {}).get("lexicalBoost", 0),
+            item.get("timestamp") or "",
+        ),
+        reverse=True,
+    )
     return candidates[:top_k]
+
+
+SEARCH_STOP_WORDS = {
+    "hola",
+    "die",
+    "fabi",
+    "fabiana",
+    "acordas",
+    "acordaste",
+    "recordas",
+    "recuerdas",
+    "contame",
+    "decime",
+    "algo",
+    "cual",
+    "cuales",
+    "como",
+    "cuando",
+    "donde",
+    "quien",
+    "que",
+    "del",
+    "con",
+    "por",
+    "para",
+    "una",
+    "uno",
+    "unos",
+    "unas",
+    "este",
+    "esta",
+    "esto",
+    "estos",
+    "estas",
+    "tenias",
+    "tenes",
+    "tiene",
+    "tengo",
+    "sos",
+    "era",
+    "eras",
+    "vos",
+    "tuyo",
+    "tuya",
+    "mio",
+    "mia",
+    "mis",
+    "tus",
+    "sus",
+}
+
+
+def extract_search_terms(query):
+    words = re.findall(r"[a-z0-9]+", query)
+    terms = []
+    for word in words:
+        if len(word) < 4 or word in SEARCH_STOP_WORDS:
+            continue
+        if word not in terms:
+            terms.append(word)
+    return terms[:12]
+
+
+def lexical_match_score(query_terms, text):
+    if not query_terms or not text:
+        return 0.0
+
+    matched = 0
+    for term in query_terms:
+        if contains_word(text, term) or (len(term) >= 7 and term[:6] in text):
+            matched += 1
+
+    if matched == 0:
+        return 0.0
+
+    coverage = matched / max(len(query_terms), 1)
+    return min(0.18, 0.04 * matched + 0.08 * coverage)
+
+
+def asks_recent_context(query):
+    triggers = [
+        "ultimo",
+        "ultimos",
+        "ultima",
+        "ultimas",
+        "reciente",
+        "recientes",
+        "ultimo año",
+        "ultimamente",
+        "ultimos meses",
+        "ahora",
+        "estos dias",
+    ]
+    return any(trigger in query for trigger in triggers)
+
+
+def latest_parseable_timestamp(rows):
+    timestamps = [
+        parse_timestamp(row.get("timestamp"))
+        for row in rows
+        if row.get("sourceType") != "user_assertion"
+    ]
+    timestamps = [timestamp for timestamp in timestamps if timestamp]
+    return max(timestamps) if timestamps else None
+
+
+def parse_timestamp(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def recency_match_score(row, latest_timestamp):
+    if not latest_timestamp or row.get("sourceType") == "user_assertion":
+        return 0.0
+
+    timestamp = parse_timestamp(row.get("timestamp"))
+    if not timestamp:
+        return 0.0
+
+    age_days = max(0, (latest_timestamp - timestamp).days)
+    if age_days <= 30:
+        return 0.08
+    if age_days <= 90:
+        return 0.06
+    if age_days <= 365:
+        return 0.04
+    return 0.0
+
+
+def source_type_boost(row, lexical_score, query):
+    source_type = row.get("sourceType")
+    if source_type == "user_assertion":
+        return 0.08 if lexical_score >= 0.08 else -0.04
+    if source_type == "audio_transcript" and any(term in query for term in ["audio", "voz", "nota de voz"]):
+        return 0.04
+    if source_type == "whatsapp_text" and asks_whatsapp_messages(query):
+        return 0.04
+    return 0.0
 
 
 def build_recent_sources(metadata, chunks_by_id, top_k, role, source_type, show_text, include_conversation, prefer_whatsapp):

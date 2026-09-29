@@ -21,10 +21,12 @@ Los resultados privados se escriben en `data/processed/evaluations`.
 
 Objetivo: mejorar las fuentes antes de generar la respuesta.
 
-- Recuperar mas candidatos iniciales.
 - Combinar busqueda semantica, palabras exactas y fechas.
-- Reordenar candidatos con reglas locales o un reranker opcional.
+- Reordenar candidatos con reglas locales.
 - Dar prioridad temporal cuando la pregunta diga "ultimo", "reciente" o "ultimo año".
+- Guardar senales de ranking por fuente: similitud semantica, impulso lexical, impulso temporal e impulso por tipo de fuente.
+
+Estado: implementado como ranking hibrido local en `answer-memory.py`. Queda como mejora futura recuperar mas candidatos iniciales y sumar un reranker externo opcional.
 
 ## Etapa 3: validador de respuesta
 

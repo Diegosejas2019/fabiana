@@ -18,6 +18,15 @@
     }
   },
   {
+    "id": "recent-health-context-last-year",
+    "query": "en el ultimo año hablaste de problemas estomacales?",
+    "expect": {
+      "generationModeIn": ["health-context-check"],
+      "replyIncludes": ["mis problemas", "estomago", "malestares digestivos"],
+      "replyExcludes": ["no tengo suficiente", "no hay problema", "tenes un problema"]
+    }
+  },
+  {
     "id": "self-description-uses-confirmed-health-context",
     "query": "contame algo de vos",
     "expect": {
