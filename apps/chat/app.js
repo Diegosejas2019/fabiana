@@ -7,6 +7,7 @@ const statusText = document.querySelector("#statusText");
 const sourceSummary = document.querySelector("#sourceSummary");
 const roleSelect = document.querySelector("#roleSelect");
 const sourceSelect = document.querySelector("#sourceSelect");
+const answerStore = new Map();
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -37,7 +38,7 @@ form.addEventListener("submit", async (event) => {
     }
 
     const answer = await response.json();
-    appendAnswer(answer);
+    appendAnswer(answer, query);
     renderSources(answer.sources ?? []);
     sourceSummary.textContent = `${answer.evidenceCount} fuentes - ${answer.confidence} - ${answer.retrievalMode ?? "semantic"}`;
   } catch (error) {
@@ -49,22 +50,68 @@ form.addEventListener("submit", async (event) => {
   }
 });
 
-function appendAnswer(answer) {
+function appendAnswer(answer, query) {
   const article = document.createElement("article");
   article.className = "bubble assistant";
+  const answerId = crypto.randomUUID();
+  answerStore.set(answerId, { ...answer, query });
   const reply = answer.reply || answer.draft || "No tengo una respuesta suficiente con las fuentes disponibles.";
   const retrieval = answer.retrievalMode ?? "semantic";
   const generation = answer.generationMode ?? "fallback";
   const style = answer.styleProfile ? ` - Estilo: ${answer.styleProfile.sampleCount} muestras` : "";
   const mode = `Busqueda: ${retrieval} - Respuesta: ${generation}${style}`;
+  article.dataset.answerId = answerId;
   article.innerHTML = `
     <div class="bubble-meta">Fabiana</div>
     <p>${escapeHtml(reply)}</p>
     <div class="bubble-note">${escapeHtml(mode)}</div>
-    <span class="confidence ${answer.confidence}">${answer.confidence}</span>
+    <div class="bubble-actions">
+      <span class="confidence ${answer.confidence}">${answer.confidence}</span>
+      <button class="approve-button" type="button" data-approve-id="${answerId}">Confiable</button>
+    </div>
   `;
+  article.querySelector("[data-approve-id]")?.addEventListener("click", handleApproveAnswer);
   messages.append(article);
   article.scrollIntoView({ block: "end" });
+}
+
+async function handleApproveAnswer(event) {
+  const button = event.currentTarget;
+  const answerId = button.dataset.approveId;
+  const answer = answerStore.get(answerId);
+  if (!answer) {
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = "Guardando";
+
+  try {
+    const response = await fetch("/api/feedback/approve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query: answer.query,
+        reply: answer.reply || answer.draft || "",
+        confidence: answer.confidence,
+        retrievalMode: answer.retrievalMode,
+        generationMode: answer.generationMode,
+        styleProfile: answer.styleProfile,
+        sources: answer.sources ?? []
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+
+    button.textContent = "Guardada";
+    button.classList.add("approved");
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = "Confiable";
+    console.error(error);
+  }
 }
 
 function appendMessage(kind, label, text) {

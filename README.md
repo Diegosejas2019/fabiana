@@ -127,6 +127,8 @@ te confirmo que ...
 
 La app guarda esos datos como `user_assertion`, los convierte en memoria privada, recompone `data/processed/combined-memory` y vuelve a crear embeddings. Esos datos aparecen como fuente manual confirmada y se usan para preguntas de hechos basicos, pero no se usan como muestra de estilo de Fabiana.
 
+Las respuestas marcadas como confiables desde la app se guardan en `data/processed/feedback/approved-responses.jsonl`. Ese archivo es un dataset privado de aprobaciones de Diego: no se mezcla con recuerdos reales ni datos personales, y queda listo para evaluar prompts, construir ejemplos de respuesta o entrenar una capa posterior.
+
 Para crear embeddings locales:
 
 ```bash

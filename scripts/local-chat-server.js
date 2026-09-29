@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { createReadStream, existsSync } from "node:fs";
-import { extname, join, normalize, resolve } from "node:path";
+import { dirname, extname, join, normalize, resolve } from "node:path";
 import { spawn } from "node:child_process";
 
 const root = process.cwd();
@@ -27,6 +27,7 @@ const combinedIndexDir = resolve(root, "data/processed/combined-rag");
 const defaultChunksPath = resolve(root, "data/processed/memory/chunks.jsonl");
 const defaultIndexDir = resolve(root, "data/processed/rag");
 const styleProfilePath = resolve(root, "data/processed/persona/persona-style.json");
+const approvedResponsesPath = resolve(root, "data/processed/feedback/approved-responses.jsonl");
 const port = Number(process.env.PORT ?? 4173);
 let assertionQueue = Promise.resolve();
 
@@ -48,6 +49,11 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "POST" && url.pathname === "/api/assert") {
       await handleAssertion(request, response);
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/feedback/approve") {
+      await handleApprovedResponse(request, response);
       return;
     }
 
@@ -128,6 +134,65 @@ async function handleAssertion(request, response) {
   const result = await saveUserAssertion(text, payload);
   response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
   response.end(JSON.stringify(result, null, 2));
+}
+
+async function handleApprovedResponse(request, response) {
+  const body = await readBody(request);
+  const payload = JSON.parse(body || "{}");
+  const query = String(payload.query ?? "").trim();
+  const reply = String(payload.reply ?? "").trim();
+
+  if (!query || !reply) {
+    response.writeHead(400).end("Missing query or reply");
+    return;
+  }
+
+  const row = buildApprovedResponseRow(payload, query, reply);
+  await mkdir(dirname(approvedResponsesPath), { recursive: true });
+  await appendFile(approvedResponsesPath, `${JSON.stringify(row)}\n`, "utf8");
+
+  response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+  response.end(
+    JSON.stringify(
+      {
+        ok: true,
+        id: row.id,
+        outputPath: approvedResponsesPath,
+        approvedAt: row.approvedAt
+      },
+      null,
+      2
+    )
+  );
+}
+
+function buildApprovedResponseRow(payload, query, reply) {
+  const approvedAt = new Date().toISOString();
+  const sources = Array.isArray(payload.sources) ? payload.sources : [];
+  return {
+    schemaVersion: 1,
+    id: `approved_${approvedAt.replace(/[-:.TZ]/g, "").slice(0, 17)}`,
+    approvedAt,
+    approvedBy: "Diego",
+    query,
+    reply,
+    confidence: payload.confidence ?? null,
+    retrievalMode: payload.retrievalMode ?? null,
+    generationMode: payload.generationMode ?? null,
+    styleProfile: payload.styleProfile ?? null,
+    sourceCount: sources.length,
+    sources: sources.map((source) => ({
+      score: source.score ?? null,
+      memoryId: source.memoryId ?? null,
+      messageId: source.messageId ?? null,
+      timestamp: source.timestamp ?? null,
+      localDate: source.localDate ?? null,
+      localTime: source.localTime ?? null,
+      role: source.role ?? null,
+      sourceType: source.sourceType ?? null,
+      text: source.text ?? null
+    }))
+  };
 }
 
 function extractAssertionText(query) {
