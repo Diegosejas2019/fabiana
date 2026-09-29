@@ -16,6 +16,7 @@ const memoryCliScript = resolve(root, "packages/whatsapp-parser/src/cli.js");
 const embedScript = resolve(root, "scripts/embed-memory-chunks.py");
 const buildStyleProfileScript = resolve(root, "scripts/build-style-profile.js");
 const buildDeepProfileScript = resolve(root, "scripts/build-deep-profile.js");
+const extractFamilyEntitiesScript = resolve(root, "scripts/extract-family-entity-candidates.js");
 const whatsappMemoriesPath = resolve(root, "data/processed/memory/memories.jsonl");
 const facebookMemoriesPath = resolve(root, "data/processed/facebook/memories.jsonl");
 const assertionDir = resolve(root, "data/processed/user-assertions");
@@ -31,6 +32,9 @@ const styleProfilePath = resolve(root, "data/processed/persona/persona-style.jso
 const deepProfilePath = resolve(root, "data/processed/persona/deep-profile.json");
 const approvedResponsesPath = resolve(root, "data/processed/feedback/approved-responses.jsonl");
 const responseFeedbackPath = resolve(root, "data/processed/feedback/response-feedback.jsonl");
+const entityReviewDir = resolve(root, "data/processed/entity-review");
+const familyCandidatesPath = resolve(entityReviewDir, "family-candidates.json");
+const familyReviewsPath = resolve(entityReviewDir, "family-reviews.jsonl");
 const port = Number(process.env.PORT ?? 4173);
 let assertionQueue = Promise.resolve();
 
@@ -62,6 +66,21 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "POST" && url.pathname === "/api/feedback/review") {
       await handleResponseFeedback(request, response);
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/entities/family") {
+      await handleFamilyEntities(request, response);
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/entities/family/rebuild") {
+      await handleFamilyEntityRebuild(request, response);
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/entities/family/review") {
+      await handleFamilyEntityReview(request, response);
       return;
     }
 
@@ -220,6 +239,150 @@ async function handleResponseFeedback(request, response) {
       null,
       2
     )
+  );
+}
+
+async function handleFamilyEntities(_request, response) {
+  if (!existsSync(familyCandidatesPath)) {
+    await rebuildFamilyEntityCandidates();
+  }
+
+  const review = await readFamilyEntityReview();
+  response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+  response.end(JSON.stringify(review, null, 2));
+}
+
+async function handleFamilyEntityRebuild(_request, response) {
+  const result = await rebuildFamilyEntityCandidates();
+  const review = await readFamilyEntityReview();
+  response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+  response.end(JSON.stringify({ ok: true, result, review }, null, 2));
+}
+
+async function handleFamilyEntityReview(request, response) {
+  const body = await readBody(request);
+  const payload = JSON.parse(body || "{}");
+  const candidateId = String(payload.candidateId ?? "").trim();
+  const action = String(payload.action ?? "").trim();
+
+  if (!candidateId || !["approved", "rejected"].includes(action)) {
+    response.writeHead(400).end("Missing candidateId or valid action");
+    return;
+  }
+
+  const review = await readFamilyEntityReview();
+  const candidate = review.candidates.find((item) => item.id === candidateId);
+  if (!candidate) {
+    response.writeHead(404).end("Candidate not found");
+    return;
+  }
+
+  let assertionResult = null;
+  if (action === "approved") {
+    assertionResult = await saveUserAssertion(candidate.assertionText, {
+      target: "Fabiana Sejas",
+      author: "Diego"
+    });
+  }
+
+  const row = {
+    schemaVersion: 1,
+    id: `family_review_${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 17)}`,
+    reviewedAt: new Date().toISOString(),
+    reviewedBy: "Diego",
+    candidateId,
+    action,
+    assertionText: candidate.assertionText,
+    candidate: {
+      subject: candidate.subject,
+      relation: candidate.relation,
+      object: candidate.object,
+      confidence: candidate.confidence,
+      evidenceCount: candidate.evidenceCount
+    },
+    notes: String(payload.notes ?? "").trim() || null
+  };
+  await mkdir(dirname(familyReviewsPath), { recursive: true });
+  await appendFile(familyReviewsPath, `${JSON.stringify(row)}\n`, "utf8");
+
+  response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+  response.end(
+    JSON.stringify(
+      {
+        ok: true,
+        review: row,
+        assertion: assertionResult
+          ? {
+              query: assertionResult.query,
+              generationMode: assertionResult.generationMode
+            }
+          : null
+      },
+      null,
+      2
+    )
+  );
+}
+
+async function readFamilyEntityReview() {
+  if (!existsSync(familyCandidatesPath)) {
+    return {
+      schemaVersion: 1,
+      generatedAt: null,
+      source: null,
+      policy: null,
+      summary: {
+        candidateCount: 0,
+        pendingCount: 0,
+        approvedCount: 0,
+        rejectedCount: 0
+      },
+      candidates: []
+    };
+  }
+
+  const data = JSON.parse(await readFile(familyCandidatesPath, "utf8"));
+  const reviewRows = existsSync(familyReviewsPath)
+    ? readJsonLines(await readFile(familyReviewsPath, "utf8"))
+    : [];
+  const latestByCandidate = new Map();
+  for (const row of reviewRows) {
+    latestByCandidate.set(row.candidateId, row);
+  }
+
+  const candidates = (data.candidates ?? []).map((candidate) => {
+    const review = latestByCandidate.get(candidate.id);
+    return {
+      ...candidate,
+      status: review?.action ?? candidate.status ?? "pending",
+      reviewedAt: review?.reviewedAt ?? null
+    };
+  });
+
+  return {
+    ...data,
+    summary: {
+      ...(data.summary ?? {}),
+      pendingCount: candidates.filter((candidate) => candidate.status === "pending").length,
+      approvedCount: candidates.filter((candidate) => candidate.status === "approved").length,
+      rejectedCount: candidates.filter((candidate) => candidate.status === "rejected").length
+    },
+    candidates
+  };
+}
+
+async function rebuildFamilyEntityCandidates() {
+  await mkdir(entityReviewDir, { recursive: true });
+  return JSON.parse(
+    await runNode([
+      extractFamilyEntitiesScript,
+      resolveMemoriesPath(),
+      familyCandidatesPath,
+      "--role",
+      "targetPerson",
+      "--min-confidence",
+      "0.9"
+    ])
   );
 }
 
@@ -424,6 +587,10 @@ async function findAssertionById(id) {
 
 function resolveChunksPath() {
   return existsSync(combinedChunksPath) ? combinedChunksPath : defaultChunksPath;
+}
+
+function resolveMemoriesPath() {
+  return existsSync(combinedMemoriesPath) ? combinedMemoriesPath : whatsappMemoriesPath;
 }
 
 function resolveIndexDir() {

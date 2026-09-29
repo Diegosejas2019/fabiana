@@ -7,8 +7,14 @@ const statusText = document.querySelector("#statusText");
 const sourceSummary = document.querySelector("#sourceSummary");
 const roleSelect = document.querySelector("#roleSelect");
 const sourceSelect = document.querySelector("#sourceSelect");
+const entitySummary = document.querySelector("#entitySummary");
+const entityCandidates = document.querySelector("#entityCandidates");
+const refreshEntitiesButton = document.querySelector("#refreshEntitiesButton");
 const answerStore = new Map();
 const conversationTurns = [];
+
+refreshEntitiesButton?.addEventListener("click", () => loadFamilyEntities({ rebuild: true }));
+loadFamilyEntities();
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -296,6 +302,133 @@ function displaySourceType(sourceType) {
     facebook_text: "Facebook"
   };
   return labels[sourceType] ?? sourceType;
+}
+
+async function loadFamilyEntities(options = {}) {
+  const rebuild = Boolean(options.rebuild);
+  if (refreshEntitiesButton) {
+    refreshEntitiesButton.disabled = true;
+    refreshEntitiesButton.textContent = rebuild ? "Analizando" : "Cargando";
+  }
+  if (entitySummary) {
+    entitySummary.textContent = rebuild ? "Analizando backups" : "Cargando candidatos";
+  }
+
+  try {
+    const response = await fetch(rebuild ? "/api/entities/family/rebuild" : "/api/entities/family", {
+      method: rebuild ? "POST" : "GET",
+      headers: rebuild ? { "Content-Type": "application/json" } : undefined
+    });
+
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+
+    const payload = await response.json();
+    renderFamilyEntities(payload.review ?? payload);
+  } catch (error) {
+    if (entitySummary) {
+      entitySummary.textContent = "No pude cargar entidades";
+    }
+    console.error(error);
+  } finally {
+    if (refreshEntitiesButton) {
+      refreshEntitiesButton.disabled = false;
+      refreshEntitiesButton.textContent = "Analizar";
+    }
+  }
+}
+
+function renderFamilyEntities(review) {
+  const candidates = review.candidates ?? [];
+  const pending = candidates.filter((candidate) => candidate.status === "pending");
+  const approved = candidates.filter((candidate) => candidate.status === "approved");
+  const rejected = candidates.filter((candidate) => candidate.status === "rejected");
+
+  if (entitySummary) {
+    entitySummary.textContent = `${pending.length} pendientes - ${approved.length} aprobadas - ${rejected.length} rechazadas`;
+  }
+
+  entityCandidates.replaceChildren();
+  if (candidates.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "source-meta";
+    empty.textContent = "Sin candidatos por ahora.";
+    entityCandidates.append(empty);
+    return;
+  }
+
+  for (const candidate of candidates) {
+    const card = document.createElement("article");
+    card.className = `entity-card ${candidate.status}`;
+    card.innerHTML = `
+      <div class="entity-card-head">
+        <div>
+          <strong>${escapeHtml(candidate.object)}</strong>
+          <span>${escapeHtml(candidate.relation)} de ${escapeHtml(candidate.subject)}</span>
+        </div>
+        <span class="entity-score">${Math.round(Number(candidate.confidence ?? 0) * 100)}%</span>
+      </div>
+      <p>${escapeHtml(candidate.assertionText)}</p>
+      <div class="entity-meta">${candidate.evidenceCount ?? 0} evidencias - ${escapeHtml((candidate.sourceTypes ?? []).join(", "))}</div>
+      <details>
+        <summary>Ver evidencias</summary>
+        <div class="entity-evidence">
+          ${(candidate.evidence ?? []).map((item) => `
+            <div class="entity-evidence-item">
+              <div class="entity-meta">${escapeHtml(item.localDate ?? "")} ${escapeHtml(item.localTime ?? "")} - ${escapeHtml(displaySourceType(item.sourceType))}</div>
+              <p>${escapeHtml(item.text ?? "")}</p>
+            </div>
+          `).join("")}
+        </div>
+      </details>
+      <div class="entity-actions">
+        ${candidate.status === "pending" ? `
+          <button type="button" data-entity-approve="${escapeHtml(candidate.id)}">Aprobar</button>
+          <button type="button" data-entity-reject="${escapeHtml(candidate.id)}">Rechazar</button>
+        ` : `<span class="entity-status">${escapeHtml(displayEntityStatus(candidate.status))}</span>`}
+      </div>
+    `;
+    card.querySelector("[data-entity-approve]")?.addEventListener("click", () => reviewFamilyEntity(candidate.id, "approved", card));
+    card.querySelector("[data-entity-reject]")?.addEventListener("click", () => reviewFamilyEntity(candidate.id, "rejected", card));
+    entityCandidates.append(card);
+  }
+}
+
+async function reviewFamilyEntity(candidateId, action, card) {
+  const buttons = card.querySelectorAll("button");
+  buttons.forEach((button) => {
+    button.disabled = true;
+    button.textContent = "Guardando";
+  });
+
+  try {
+    const response = await fetch("/api/entities/family/review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ candidateId, action })
+    });
+
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+
+    await loadFamilyEntities();
+  } catch (error) {
+    buttons.forEach((button) => {
+      button.disabled = false;
+    });
+    console.error(error);
+  }
+}
+
+function displayEntityStatus(status) {
+  const labels = {
+    approved: "Aprobada",
+    rejected: "Rechazada",
+    pending: "Pendiente"
+  };
+  return labels[status] ?? status;
 }
 
 function setLoading(loading) {

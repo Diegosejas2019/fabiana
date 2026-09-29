@@ -274,7 +274,7 @@ button:disabled {
 
 .sources-pane {
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto minmax(220px, 1fr) minmax(220px, 42%);
 }
 
 .sources-pane header {
@@ -319,6 +319,131 @@ button:disabled {
   font-size: 14px;
   line-height: 1.45;
   white-space: pre-wrap;
+}
+
+.entity-review {
+  min-height: 0;
+  border-top: 1px solid var(--line);
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.entity-review header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.entity-review header button {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.entity-candidates {
+  overflow: auto;
+  padding: 12px;
+}
+
+.entity-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 10px;
+  padding: 10px;
+  background: #fff;
+}
+
+.entity-card.approved {
+  border-color: #b8d8d1;
+  background: #f6fbfa;
+}
+
+.entity-card.rejected {
+  opacity: 0.68;
+}
+
+.entity-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.entity-card-head div {
+  display: grid;
+  gap: 2px;
+}
+
+.entity-card-head strong {
+  font-size: 14px;
+}
+
+.entity-card-head span,
+.entity-meta,
+.entity-status {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.entity-score {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--soft);
+  color: var(--accent-strong);
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.entity-card p {
+  margin-top: 8px;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.entity-card details {
+  margin-top: 8px;
+}
+
+.entity-card summary {
+  cursor: pointer;
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.entity-evidence {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.entity-evidence-item {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.entity-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.entity-actions button {
+  height: 26px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--accent-strong);
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.entity-actions button + button {
+  color: var(--muted);
 }
 
 @media (max-width: 900px) {
