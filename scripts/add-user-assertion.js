@@ -5,17 +5,24 @@ import { dirname } from "node:path";
 const [, , assertionsPath, ...rawFlags] = process.argv;
 
 if (!assertionsPath) {
-  console.error("Uso: node scripts/add-user-assertion.js <assertions.jsonl> --text <dato> [--target Fabiana] [--author Diego]");
+  console.error("Uso: node scripts/add-user-assertion.js <assertions.jsonl> --text <dato> [--text-file archivo.txt] [--target Fabiana] [--author Diego]");
   process.exit(1);
 }
 
 const flags = parseFlags(rawFlags);
-const text = String(flags.text ?? "").trim();
+const textParts = [];
+if (flags.text) {
+  textParts.push(String(flags.text).trim());
+}
+if (flags["text-file"]) {
+  textParts.push((await readFile(String(flags["text-file"]), "utf8")).trim());
+}
+const text = textParts.filter(Boolean).join("\n\n").trim();
 const target = String(flags.target ?? "Fabiana Sejas").trim();
 const author = String(flags.author ?? "Diego").trim();
 
 if (!text) {
-  console.error("Falta --text <dato>.");
+  console.error("Falta --text <dato> o --text-file <archivo>.");
   process.exit(1);
 }
 

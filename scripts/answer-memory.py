@@ -314,6 +314,7 @@ def build_fact_draft(confidence, sources, fact_terms):
 
 def build_fact_reply(confidence, sources, fact_terms):
     display_name = display_fact_name(fact_terms)
+    display_names = display_fact_names(fact_terms)
     display_relation = display_fact_relation(fact_terms)
     if confidence == "none":
         if sources:
@@ -324,7 +325,8 @@ def build_fact_reply(confidence, sources, fact_terms):
         return f"No encuentro una fuente clara para confirmar si {display_name} es {display_relation}."
 
     if confidence == "high":
-        return f"Si, con el dato confirmado por Diego, {display_name} figura como {display_relation}."
+        verb = "figuran" if len(fact_terms["names"]) > 1 else "figura"
+        return f"Si, con el dato confirmado por Diego, {display_names} {verb} como {display_relation}."
 
     return (
         f"Lo tomaria con cautela: encontre menciones que relacionan a {display_name} con {display_relation}, "
@@ -623,13 +625,13 @@ def asks_recent_conversation(query):
 
 
 def asks_identity_fact(query):
-    relation_terms = ["hijo", "hija", "hermano", "hermana", "marido", "esposo", "mama", "papa", "madre", "padre"]
+    relation_terms = ["hijos", "hijas", "hijo", "hija", "hermano", "hermana", "marido", "esposo", "mama", "papa", "madre", "padre"]
     identity_triggers = ["se llama", "llama", "es tu", "tu ", "tus "]
     return any(term in query for term in relation_terms) and any(trigger in query for trigger in identity_triggers)
 
 
 def extract_fact_terms(query):
-    relation_terms = ["hijo", "hija", "hermano", "hermana", "marido", "esposo", "mama", "papa", "madre", "padre"]
+    relation_terms = ["hijos", "hijas", "hijo", "hija", "hermano", "hermana", "marido", "esposo", "mama", "papa", "madre", "padre"]
     relations = [term for term in relation_terms if term in query]
     stop_words = {
         "hola",
@@ -660,9 +662,9 @@ def extract_fact_terms(query):
 
 
 def relation_matches(relation, text):
-    if relation == "hijo":
+    if relation in ["hijo", "hijos"]:
         return "hijo" in text or "hijos" in text
-    if relation == "hija":
+    if relation in ["hija", "hijas"]:
         return "hija" in text or "hijas" in text
     return relation in text
 
@@ -671,11 +673,26 @@ def display_fact_name(fact_terms):
     return fact_terms["names"][0].capitalize() if fact_terms["names"] else "esa persona"
 
 
+def display_fact_names(fact_terms):
+    names = [name.capitalize() for name in fact_terms["names"] if name]
+    if not names:
+        return "esa persona"
+    if len(names) == 1:
+        return names[0]
+    if len(names) == 2:
+        return f"{names[0]} y {names[1]}"
+    return f"{', '.join(names[:-1])} y {names[-1]}"
+
+
 def display_fact_relation(fact_terms):
     if not fact_terms["relations"]:
         return "esa relacion"
     relation = fact_terms["relations"][0]
     if relation in ["hijo", "hija"]:
+        return f"mi {relation}"
+    if relation in ["hijos", "hijas"]:
+        return f"mis {relation}"
+    if relation in ["marido", "esposo"]:
         return f"mi {relation}"
     return relation
 
