@@ -50,6 +50,26 @@
     }
   },
   {
+    "id": "leandro-query-does-not-treat-fabi-as-name",
+    "query": "hola fabi,te acordas de tu hijo leandro?",
+    "expect": {
+      "validationStatusIn": ["ok"],
+      "generationModeIn": ["fact-check"],
+      "replyIncludes": ["leandro", "mi hijo"],
+      "replyExcludes": ["fabi,te", "fabi y leandro", "son mi hijo", "contame"]
+    }
+  },
+  {
+    "id": "relation-query-without-name-uses-profile",
+    "query": "contame algo sobre tu hijo",
+    "expect": {
+      "validationStatusIn": ["ok"],
+      "generationModeIn": ["profile-relation-check"],
+      "replyIncludes": ["leandro", "mi hijo", "18"],
+      "replyExcludes": ["contame", "algo y sobre", "son mi hijo", "no tengo suficiente"]
+    }
+  },
+  {
     "id": "contextual-pronoun-resolves-leandro",
     "query": "decime algo acerca de el",
     "history": [

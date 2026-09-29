@@ -86,11 +86,19 @@ def main():
     elif asks_identity_fact(normalized_query):
         retrieval_mode = "fact"
         fact_terms = extract_fact_terms(normalized_query)
-        sources = build_fact_sources(metadata, chunks_by_id, args.top_k, args.role, args.source_type, args.show_text, fact_terms)
-        confidence = classify_fact_confidence(sources, fact_terms)
-        draft = build_fact_draft(confidence, sources, fact_terms)
-        reply = build_fact_reply(confidence, sources, fact_terms)
-        generation_mode = "fact-check"
+        profile_reply = build_profile_relation_reply(normalized_query, fact_terms, deep_profile)
+        if profile_reply and not fact_terms["names"]:
+            sources = []
+            confidence = "high"
+            draft = "Use el mapa familiar confirmado por Diego para responder sin inventar nombres desde la pregunta."
+            reply = profile_reply
+            generation_mode = "profile-relation-check"
+        else:
+            sources = build_fact_sources(metadata, chunks_by_id, args.top_k, args.role, args.source_type, args.show_text, fact_terms)
+            confidence = classify_fact_confidence(sources, fact_terms)
+            draft = build_fact_draft(confidence, sources, fact_terms)
+            reply = build_fact_reply(confidence, sources, fact_terms)
+            generation_mode = "fact-check"
     else:
         retrieval_mode = "semantic"
         embeddings = np.load(index_dir / "embeddings.npy")
@@ -1267,13 +1275,26 @@ def extract_fact_terms(query):
     relations = [term for term in relation_terms if contains_word(query, term)]
     stop_words = {
         "hola",
+        "fabi",
+        "fabiana",
+        "die",
+        "diego",
         "acordas",
         "acordaste",
         "recordas",
         "recorda",
         "recuerdas",
         "recuerda",
+        "acordar",
+        "recordar",
+        "contame",
+        "decime",
+        "decir",
+        "algo",
+        "acerca",
+        "sobre",
         "cual",
+        "cuales",
         "como",
         "quien",
         "que",
@@ -1295,10 +1316,16 @@ def extract_fact_terms(query):
         "son",
         "sus",
         "fa",
+        "los",
+        "las",
+        "un",
+        "una",
+        "y",
     }
+    tokens = re.findall(r"[a-z0-9]+", query)
     names = [
         word
-        for word in query.replace("?", " ").replace("¿", " ").split()
+        for word in tokens
         if len(word) > 3 and word not in stop_words and word not in relation_terms
     ]
     return {
@@ -1614,6 +1641,74 @@ def build_profile_person_reply(query, deep_profile):
         return f"Si, die, {rewritten}"
 
     return None
+
+
+def build_profile_relation_reply(query, fact_terms, deep_profile):
+    if not deep_profile or not fact_terms.get("relations"):
+        return None
+
+    relations = fact_terms["relations"]
+    if any(relation in relations for relation in ["hijo", "hijos", "hija", "hijas"]):
+        children = profile_children(deep_profile)
+        if not children:
+            return None
+
+        if contains_any_word(query, ["hijo"]) and not contains_any_word(query, ["hijos", "hija", "hijas"]):
+            sons = [child for child in children if child["relation"] == "hijo"]
+            if len(sons) == 1:
+                return format_single_child_reply(sons[0])
+
+        return format_children_reply(children)
+
+    return None
+
+
+def profile_children(deep_profile):
+    children = []
+    relations = deep_profile.get("relationshipMap", {}).get("relationships", [])
+    for relation in relations:
+        subject = normalize_for_match(relation.get("subject", ""))
+        relation_name = normalize_for_match(relation.get("relation", ""))
+        name = str(relation.get("object") or "").strip()
+        if subject == "fabiana" and relation_name in ["hijo", "hija"] and name:
+            children.append({
+                "name": name,
+                "relation": relation_name,
+                "age": profile_person_age(name, deep_profile),
+            })
+    return children
+
+
+def profile_person_age(name, deep_profile):
+    normalized_name = normalize_for_match(name)
+    for highlight in deep_profile.get("biography", {}).get("highlights", []):
+        text = normalize_for_match(highlight.get("text", ""))
+        if contains_word(text, normalized_name):
+            age = extract_age_from_text(text)
+            if age:
+                return age
+    return None
+
+
+def format_single_child_reply(child):
+    suffix = f" Tiene {child['age']} años." if child.get("age") else ""
+    relation = "hijo" if child["relation"] == "hijo" else "hija"
+    return f"Si, die, {child['name']} es mi {relation}.{suffix}"
+
+
+def format_children_reply(children):
+    names = [child["name"] for child in children]
+    if not names:
+        return None
+    return f"Si, die, mis hijos son {format_name_list(names)}."
+
+
+def format_name_list(names):
+    if len(names) == 1:
+        return names[0]
+    if len(names) == 2:
+        return f"{names[0]} y {names[1]}"
+    return f"{', '.join(names[:-1])} y {names[-1]}"
 
 
 def asks_profile_person_context(query):
