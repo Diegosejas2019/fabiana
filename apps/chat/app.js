@@ -97,6 +97,7 @@ async function handleApproveAnswer(event) {
         retrievalMode: answer.retrievalMode,
         generationMode: answer.generationMode,
         styleProfile: answer.styleProfile,
+        deepProfile: answer.deepProfile,
         sources: answer.sources ?? []
       })
     });

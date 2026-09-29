@@ -117,6 +117,14 @@ npm run persona:style -- data/processed/memory/memories.jsonl data/processed/per
 Esto genera un perfil privado con rasgos de forma de hablar. El perfil se usa solo como guia de estilo; los hechos siguen viniendo de fuentes recuperadas.
 Si ya combinaste WhatsApp + Facebook, usa `data/processed/combined-memory/memories.jsonl` como entrada.
 
+Para crear el perfil profundo:
+
+```bash
+npm run persona:deep -- data/processed/combined-memory/memories.jsonl data/processed/persona/deep-profile.json --role targetPerson --sample-size 1400
+```
+
+Esto genera una capa privada con voz, mapa familiar, contexto biografico y reglas de uso. El perfil profundo no reemplaza fuentes: solo guia tono y contexto general.
+
 Para guardar datos confirmados por Diego desde la app local, escribe una frase con intencion de guardado:
 
 ```text

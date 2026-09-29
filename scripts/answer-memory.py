@@ -30,6 +30,7 @@ def main():
     parser.add_argument("--show-text", action="store_true", help="Include private source text in output")
     parser.add_argument("--persona-name", default="Fabi", help="Name to use for persona replies")
     parser.add_argument("--style-profile", default=None, help="Optional persona style profile JSON")
+    parser.add_argument("--deep-profile", default=None, help="Optional deep persona profile JSON")
     parser.add_argument(
         "--llm-provider",
         default=os.environ.get("ANSWER_LLM_PROVIDER", "auto"),
@@ -48,6 +49,7 @@ def main():
     )
     args = parser.parse_args()
     style_profile = read_optional_style_profile(args.style_profile)
+    deep_profile = read_optional_deep_profile(args.deep_profile)
 
     index_dir = Path(args.index_dir)
     manifest = json.loads((index_dir / "embedding-manifest.json").read_text(encoding="utf-8"))
@@ -101,6 +103,7 @@ def main():
             args.ollama_model,
             args.ollama_url,
             style_profile,
+            deep_profile,
         )
 
     answer = {
@@ -115,6 +118,7 @@ def main():
         "reply": reply,
         "generationMode": generation_mode,
         "styleProfile": summarize_style_profile(style_profile),
+        "deepProfile": summarize_deep_profile(deep_profile),
         "draft": draft,
         "evidenceCount": len(sources),
         "sources": sources,
@@ -135,6 +139,7 @@ def main():
                 "reply": answer["reply"],
                 "generationMode": answer["generationMode"],
                 "styleProfile": answer["styleProfile"],
+                "deepProfile": answer["deepProfile"],
                 "draft": answer["draft"],
                 "evidenceCount": answer["evidenceCount"],
                 "topScore": sources[0]["score"] if sources else None,
@@ -446,7 +451,7 @@ def extract_meaning_keywords(text):
     return seen[:4]
 
 
-def build_persona_reply(query, confidence, sources, persona_name, llm_provider, ollama_model, ollama_url, style_profile):
+def build_persona_reply(query, confidence, sources, persona_name, llm_provider, ollama_model, ollama_url, style_profile, deep_profile):
     if confidence == "none":
         return (
             "No tengo un recuerdo claro de eso en lo que guardaste. "
@@ -460,7 +465,7 @@ def build_persona_reply(query, confidence, sources, persona_name, llm_provider, 
     lower_query = normalize_for_match(query)
 
     if llm_provider in ("auto", "ollama") and source_texts:
-        generated = build_ollama_reply(query, sources, persona_name, ollama_model, ollama_url, style_profile)
+        generated = build_ollama_reply(query, sources, persona_name, ollama_model, ollama_url, style_profile, deep_profile)
         if generated:
             return generated, f"ollama:{ollama_model}"
 
@@ -476,17 +481,18 @@ def build_persona_reply(query, confidence, sources, persona_name, llm_provider, 
     return build_general_reply(top_text, second_text, dates), "fallback"
 
 
-def build_ollama_reply(query, sources, persona_name, model, url, style_profile):
+def build_ollama_reply(query, sources, persona_name, model, url, style_profile, deep_profile):
     prompt_sources = format_sources_for_prompt(sources)
     if not prompt_sources:
         return None
 
     style_prompt = format_style_profile_for_prompt(style_profile)
+    deep_prompt = format_deep_profile_for_prompt(deep_profile)
     system_prompt = (
         "Sos un motor de redaccion para una app privada de memoria familiar. "
         f"Redacta como {persona_name}: cercana, simple, afectuosa y natural. "
         "Usa los mensajes recuperados como fuente de recuerdos y los datos personales confirmados por Diego solo como contexto factual. "
-        "Usa el perfil de estilo solo para forma de hablar, no como fuente de hechos. "
+        "Usa los perfiles de estilo y profundo solo para forma de hablar, relaciones y contexto general; no los uses como unica fuente de hechos nuevos. "
         "Podes inventar frases nuevas y tono conversacional, pero no inventes recuerdos, hechos, pedidos, promesas ni fechas. "
         "Si la evidencia no alcanza, decilo suavemente. "
         "No digas que sos IA, no menciones IDs tecnicos y no copies mensajes largos literalmente. "
@@ -495,6 +501,7 @@ def build_ollama_reply(query, sources, persona_name, model, url, style_profile):
     user_prompt = (
         f"Pregunta de Diego:\n{query}\n\n"
         f"Perfil de estilo de Fabiana:\n{style_prompt}\n\n"
+        f"Perfil profundo de Fabiana:\n{deep_prompt}\n\n"
         "Fuentes recuperadas (mensajes reales y datos personales confirmados):\n"
         f"{prompt_sources}\n\n"
         "Escribi una respuesta final nueva, como si Fabiana le respondiera ahora, manteniendote fiel a esas fuentes."
@@ -571,6 +578,15 @@ def read_optional_style_profile(path):
     return json.loads(profile_path.read_text(encoding="utf-8"))
 
 
+def read_optional_deep_profile(path):
+    if not path:
+        return None
+    profile_path = Path(path)
+    if not profile_path.exists():
+        return None
+    return json.loads(profile_path.read_text(encoding="utf-8"))
+
+
 def format_style_profile_for_prompt(profile):
     if not profile:
         return "No hay perfil de estilo calculado; usa solo las fuentes recuperadas."
@@ -592,6 +608,33 @@ def format_style_profile_for_prompt(profile):
     return "\n".join(parts) if parts else "Perfil disponible, pero sin rasgos resumidos."
 
 
+def format_deep_profile_for_prompt(profile):
+    if not profile:
+        return "No hay perfil profundo calculado; usa solo las fuentes recuperadas."
+
+    summary = profile.get("promptSummary")
+    if summary:
+        return shorten(summary, 1800)
+
+    voice = profile.get("voicebook", {})
+    relations = profile.get("relationshipMap", {}).get("relationships", [])
+    cues = voice.get("cues") or []
+    common_words = [entry.get("value") for entry in voice.get("frequentWords", [])[:12] if entry.get("value")]
+    relation_rows = [
+        f"{item.get('subject')} -> {item.get('relation')} -> {item.get('object')}"
+        for item in relations[:14]
+    ]
+    parts = []
+    if cues:
+        parts.append(f"Voz: {', '.join(cues)}.")
+    if common_words:
+        parts.append(f"Palabras frecuentes: {', '.join(common_words)}.")
+    if relation_rows:
+        parts.append(f"Relaciones confirmadas: {'; '.join(relation_rows)}.")
+    parts.append("Los datos confirmados por Diego son contexto factual, no recuerdos ni estilo literal.")
+    return "\n".join(parts)
+
+
 def summarize_style_profile(profile):
     if not profile:
         return None
@@ -600,6 +643,17 @@ def summarize_style_profile(profile):
         "messageCount": profile.get("messageCount"),
         "sampleCount": profile.get("sampleCount"),
         "dateRange": profile.get("dateRange"),
+    }
+
+
+def summarize_deep_profile(profile):
+    if not profile:
+        return None
+    return {
+        "schemaVersion": profile.get("schemaVersion"),
+        "sourceCounts": profile.get("sourceCounts"),
+        "dateRange": profile.get("dateRange"),
+        "relationshipCount": len(profile.get("relationshipMap", {}).get("relationships", [])),
     }
 
 

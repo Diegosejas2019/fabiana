@@ -15,6 +15,7 @@ const mergeMemoriesScript = resolve(root, "scripts/merge-memories.js");
 const memoryCliScript = resolve(root, "packages/whatsapp-parser/src/cli.js");
 const embedScript = resolve(root, "scripts/embed-memory-chunks.py");
 const buildStyleProfileScript = resolve(root, "scripts/build-style-profile.js");
+const buildDeepProfileScript = resolve(root, "scripts/build-deep-profile.js");
 const whatsappMemoriesPath = resolve(root, "data/processed/memory/memories.jsonl");
 const facebookMemoriesPath = resolve(root, "data/processed/facebook/memories.jsonl");
 const assertionDir = resolve(root, "data/processed/user-assertions");
@@ -27,6 +28,7 @@ const combinedIndexDir = resolve(root, "data/processed/combined-rag");
 const defaultChunksPath = resolve(root, "data/processed/memory/chunks.jsonl");
 const defaultIndexDir = resolve(root, "data/processed/rag");
 const styleProfilePath = resolve(root, "data/processed/persona/persona-style.json");
+const deepProfilePath = resolve(root, "data/processed/persona/deep-profile.json");
 const approvedResponsesPath = resolve(root, "data/processed/feedback/approved-responses.jsonl");
 const port = Number(process.env.PORT ?? 4173);
 let assertionQueue = Promise.resolve();
@@ -108,6 +110,10 @@ async function handleAnswer(request, response) {
     args.push("--style-profile", styleProfilePath);
   }
 
+  if (existsSync(deepProfilePath)) {
+    args.push("--deep-profile", deepProfilePath);
+  }
+
   if (payload.role) {
     args.push("--role", String(payload.role));
   }
@@ -180,6 +186,7 @@ function buildApprovedResponseRow(payload, query, reply) {
     retrievalMode: payload.retrievalMode ?? null,
     generationMode: payload.generationMode ?? null,
     styleProfile: payload.styleProfile ?? null,
+    deepProfile: payload.deepProfile ?? null,
     sourceCount: sources.length,
     sources: sources.map((source) => ({
       score: source.score ?? null,
@@ -300,6 +307,15 @@ async function rebuildCombinedMemory() {
     "targetPerson",
     "--sample-size",
     "900"
+  ]);
+  await runNode([
+    buildDeepProfileScript,
+    combinedMemoriesPath,
+    deepProfilePath,
+    "--role",
+    "targetPerson",
+    "--sample-size",
+    "1400"
   ]);
 }
 

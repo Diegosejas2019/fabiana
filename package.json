@@ -20,6 +20,7 @@
     "memory:merge": "node scripts/merge-memories.js",
     "memory:chunk": "node packages/whatsapp-parser/src/cli.js memory-chunk",
     "persona:style": "node scripts/build-style-profile.js",
+    "persona:deep": "node scripts/build-deep-profile.js",
     "rag:embed": ".venv\\Scripts\\python.exe scripts\\embed-memory-chunks.py",
     "rag:search": ".venv\\Scripts\\python.exe scripts\\search-memory.py",
     "answer:draft": ".venv\\Scripts\\python.exe scripts\\answer-memory.py",
