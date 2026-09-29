@@ -625,13 +625,47 @@ def asks_recent_conversation(query):
 
 
 def asks_identity_fact(query):
-    relation_terms = ["hijos", "hijas", "hijo", "hija", "hermano", "hermana", "marido", "esposo", "mama", "papa", "madre", "padre"]
+    relation_terms = [
+        "hijos",
+        "hijas",
+        "hijo",
+        "hija",
+        "hermano",
+        "hermana",
+        "sobrino",
+        "sobrina",
+        "sobrinos",
+        "sobrinas",
+        "marido",
+        "esposo",
+        "mama",
+        "papa",
+        "madre",
+        "padre",
+    ]
     identity_triggers = ["se llama", "llama", "es tu", "tu ", "tus "]
     return any(term in query for term in relation_terms) and any(trigger in query for trigger in identity_triggers)
 
 
 def extract_fact_terms(query):
-    relation_terms = ["hijos", "hijas", "hijo", "hija", "hermano", "hermana", "marido", "esposo", "mama", "papa", "madre", "padre"]
+    relation_terms = [
+        "hijos",
+        "hijas",
+        "hijo",
+        "hija",
+        "hermano",
+        "hermana",
+        "sobrino",
+        "sobrina",
+        "sobrinos",
+        "sobrinas",
+        "marido",
+        "esposo",
+        "mama",
+        "papa",
+        "madre",
+        "padre",
+    ]
     relations = [term for term in relation_terms if term in query]
     stop_words = {
         "hola",
@@ -666,6 +700,10 @@ def relation_matches(relation, text):
         return "hijo" in text or "hijos" in text
     if relation in ["hija", "hijas"]:
         return "hija" in text or "hijas" in text
+    if relation in ["sobrino", "sobrinos"]:
+        return "sobrino" in text or "sobrinos" in text
+    if relation in ["sobrina", "sobrinas"]:
+        return "sobrina" in text or "sobrinas" in text
     return relation in text
 
 
@@ -691,6 +729,10 @@ def display_fact_relation(fact_terms):
     if relation in ["hijo", "hija"]:
         return f"mi {relation}"
     if relation in ["hijos", "hijas"]:
+        return f"mis {relation}"
+    if relation in ["sobrino", "sobrina"]:
+        return f"mi {relation}"
+    if relation in ["sobrinos", "sobrinas"]:
         return f"mis {relation}"
     if relation in ["marido", "esposo"]:
         return f"mi {relation}"
