@@ -471,6 +471,10 @@ def build_persona_reply(query, confidence, sources, persona_name, llm_provider, 
     if preference_reply:
         return preference_reply, "preference-check"
 
+    health_reply = build_health_context_reply(lower_query, sources, deep_profile)
+    if health_reply:
+        return health_reply, "health-context-check"
+
     if llm_provider in ("auto", "ollama") and source_texts:
         generated = build_ollama_reply(query, sources, persona_name, ollama_model, ollama_url, style_profile, deep_profile, conversation_history)
         if generated:
@@ -1041,6 +1045,79 @@ def build_preference_reply(query, sources):
             return "No me aparece una fuente clara para decirte ese gusto con seguridad, die."
 
     return None
+
+
+def build_health_context_reply(query, sources, deep_profile):
+    if not asks_health_context_question(query) and not asks_self_description(query):
+        return None
+
+    rows = [
+        {
+            "text": clean_source_text(source.get("text", "")),
+            "normalized": normalize_for_match(source.get("text", "")),
+            "sourceType": source.get("sourceType"),
+        }
+        for source in sources
+        if source.get("text")
+    ]
+    stomach_rows = [
+        row
+        for row in rows
+        if any(term in row["normalized"] for term in ["estomago", "estomac", "digest", "gases", "acidez", "antiacido", "malestar"])
+    ]
+    profile_stomach_facts = find_profile_health_facts(deep_profile)
+    if profile_stomach_facts:
+        stomach_rows.extend(profile_stomach_facts)
+    confirmed = any(row["sourceType"] == "user_assertion" for row in stomach_rows)
+
+    if asks_health_context_question(query):
+        if stomach_rows:
+            if is_correction_about_fabiana(query):
+                return "Si, die, tenes razon. Era yo la que venia hablando de problemas del estomago y malestares digestivos."
+            if confirmed:
+                return "Si, die, venia hablando bastante de mis problemas del estomago y de malestares digestivos."
+            return "Si, die, me aparece que venia con temas del estomago y malestares digestivos."
+        if is_correction_about_fabiana(query):
+            return "Tenes razon, die. Era yo la que venia hablando de problemas del estomago y malestares digestivos."
+
+    if asks_self_description(query) and stomach_rows:
+        return (
+            "Die, te puedo contar que en el ultimo año venia hablando bastante de mis problemas del estomago "
+            "y de malestares digestivos. Tambien estaba muy pendiente de los chicos y de las cosas de todos los dias."
+        )
+
+    return None
+
+
+def asks_health_context_question(query):
+    return any(term in query for term in ["estomago", "estomac", "digest", "gases", "acidez", "antiacido", "malestar"])
+
+
+def asks_self_description(query):
+    triggers = ["contame algo de vos", "hablame de vos", "contame de vos", "algo de vos"]
+    return any(trigger in query for trigger in triggers)
+
+
+def is_correction_about_fabiana(query):
+    return any(term in query for term in ["sos vos", "eras vos", "vos fabi", "fabi", "fabiana"])
+
+
+def find_profile_health_facts(deep_profile):
+    if not deep_profile:
+        return []
+
+    highlights = deep_profile.get("biography", {}).get("highlights", [])
+    rows = []
+    for highlight in highlights:
+        text = clean_source_text(highlight.get("text", ""))
+        normalized = normalize_for_match(text)
+        if any(term in normalized for term in ["estomago", "estomac", "digest", "gases", "acidez", "antiacido", "malestar"]):
+            rows.append({
+                "text": text,
+                "normalized": normalized,
+                "sourceType": "user_assertion",
+            })
+    return rows
 
 
 def asks_preference_question(query):

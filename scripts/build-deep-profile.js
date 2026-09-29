@@ -178,8 +178,13 @@ function buildBiography(assertions) {
     .map((assertion) => assertion.text)
     .filter((text) => text.length > 500);
   const facts = assertions
-    .flatMap((assertion) => splitSentences(assertion.text).map((sentence) => ({ sentence, id: assertion.messageId })))
+    .flatMap((assertion) => splitSentences(assertion.text).map((sentence) => ({
+      sentence,
+      id: assertion.messageId,
+      sourceLength: assertion.text.length
+    })))
     .filter((item) => item.sentence.length > 35 && item.sentence.length < 260)
+    .sort((left, right) => left.sourceLength - right.sourceLength || left.id.localeCompare(right.id))
     .slice(0, 80);
 
   return {
