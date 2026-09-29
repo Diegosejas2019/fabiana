@@ -129,6 +129,9 @@ function checkExpectations(answer, expect) {
   if (expect.generationModeIn && !expect.generationModeIn.includes(answer.generationMode)) {
     errors.push(`respuesta esperada: ${expect.generationModeIn.join(", ")}; recibida: ${answer.generationMode}`);
   }
+  if (expect.validationStatusIn && !expect.validationStatusIn.includes(answer.validation?.status)) {
+    errors.push(`validacion esperada: ${expect.validationStatusIn.join(", ")}; recibida: ${answer.validation?.status ?? "sin-validacion"}`);
+  }
 
   for (const text of expect.replyIncludes ?? []) {
     if (!reply.includes(normalize(text))) {

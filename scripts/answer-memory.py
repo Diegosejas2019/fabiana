@@ -61,6 +61,7 @@ def main():
     chunks_by_id = {chunk["id"]: chunk for chunk in read_jsonl(args.chunks)}
 
     normalized_query = normalize_for_match(args.query)
+    fact_terms = None
 
     if asks_recent_messages(normalized_query):
         retrieval_mode = "chronological"
@@ -109,6 +110,19 @@ def main():
             conversation_history,
         )
 
+    validation = validate_and_repair_reply(
+        normalized_query,
+        reply,
+        generation_mode,
+        retrieval_mode,
+        confidence,
+        sources,
+        deep_profile,
+        fact_terms,
+    )
+    reply = validation["reply"]
+    generation_mode = validation["generationMode"]
+
     answer = {
         "schemaVersion": 2,
         "generatedAt": now_iso(),
@@ -120,6 +134,7 @@ def main():
         "retrievalMode": retrieval_mode,
         "reply": reply,
         "generationMode": generation_mode,
+        "validation": validation["summary"],
         "styleProfile": summarize_style_profile(style_profile),
         "deepProfile": summarize_deep_profile(deep_profile),
         "draft": draft,
@@ -141,6 +156,7 @@ def main():
                 "retrievalMode": answer["retrievalMode"],
                 "reply": answer["reply"],
                 "generationMode": answer["generationMode"],
+                "validation": answer["validation"],
                 "styleProfile": answer["styleProfile"],
                 "deepProfile": answer["deepProfile"],
                 "draft": answer["draft"],
@@ -517,6 +533,138 @@ def build_fact_reply(confidence, sources, fact_terms):
 def is_user_confirmed_source(source):
     evidence = source.get("evidence") or {}
     return source.get("sourceType") == "user_assertion" and evidence.get("confidence") == "user_confirmed"
+
+
+def validate_and_repair_reply(query, reply, generation_mode, retrieval_mode, confidence, sources, deep_profile, fact_terms):
+    issues = collect_reply_issues(query, reply, retrieval_mode, sources, deep_profile)
+    repaired_reply = reply
+    repaired = False
+
+    if issues:
+        candidate = build_repair_reply(query, retrieval_mode, confidence, sources, deep_profile, fact_terms, issues)
+        if candidate and normalize_for_match(candidate) != normalize_for_match(reply):
+            repaired_reply = candidate
+            repaired = True
+            issues = collect_reply_issues(query, repaired_reply, retrieval_mode, sources, deep_profile)
+
+    status = "repaired" if repaired else ("flagged" if issues else "ok")
+    repaired_generation_mode = f"validator-repair:{generation_mode}" if repaired else generation_mode
+
+    return {
+        "reply": repaired_reply,
+        "generationMode": repaired_generation_mode,
+        "summary": {
+            "status": status,
+            "issues": issues,
+            "repaired": repaired,
+        },
+    }
+
+
+def collect_reply_issues(query, reply, retrieval_mode, sources, deep_profile):
+    normalized_reply = normalize_for_match(reply)
+    issues = []
+
+    if has_report_tone(normalized_reply):
+        issues.append("report_tone")
+    if has_unwanted_citation(query, reply, normalized_reply):
+        issues.append("unwanted_citation")
+    if has_bad_addressing(normalized_reply):
+        issues.append("bad_addressing")
+    if has_health_contradiction(query, normalized_reply, sources, deep_profile):
+        issues.append("health_contradiction")
+    if retrieval_mode == "fact" and has_fact_report_leak(normalized_reply):
+        issues.append("fact_report_leak")
+
+    return unique_items(issues)
+
+
+def build_repair_reply(query, retrieval_mode, confidence, sources, deep_profile, fact_terms, issues):
+    if "health_contradiction" in issues or asks_health_context_question(query) or asks_self_description(query):
+        health_reply = build_health_context_reply(query, sources, deep_profile)
+        if health_reply:
+            return health_reply
+
+    if retrieval_mode == "fact" and fact_terms:
+        return build_fact_reply(confidence, sources, fact_terms)
+
+    preference_reply = build_preference_reply(query, sources)
+    if preference_reply:
+        return preference_reply
+
+    if asks_recent_messages(query):
+        return build_recent_reply(sources, True)
+
+    if "report_tone" in issues or "unwanted_citation" in issues or "bad_addressing" in issues:
+        if confidence == "none":
+            return "No tengo un recuerdo claro de eso, die. Prefiero no inventarte algo que no aparece bien en las fuentes."
+        return "Si, die. Me aparece algo relacionado, pero prefiero contestarte con cuidado y sin inventar detalles que no esten claros."
+
+    return None
+
+
+def has_report_tone(normalized_reply):
+    markers = [
+        "fuentes recuperadas",
+        "whatsapp_text",
+        "audio_transcript",
+        "facebook_text",
+        "user_assertion",
+        "evidencia adjunta",
+        "evidencias adjuntas",
+        "en orden cronologico",
+        "mensaje de fabiana del",
+        "source:",
+    ]
+    return any(marker in normalized_reply for marker in markers)
+
+
+def has_unwanted_citation(query, reply, normalized_reply):
+    if asks_recent_messages(query) and re.search(r"\b\d{1,2}/\d{1,2}/\d{4}\b", reply):
+        return True
+    if asks_recent_messages(query) and ('"' in reply or "“" in reply or "”" in reply):
+        return True
+    return "te puso:" in normalized_reply or "diciendo:" in normalized_reply
+
+
+def has_bad_addressing(normalized_reply):
+    return any(marker in normalized_reply for marker in ["¿die?", "?die", ", ¿die", ", ?die"])
+
+
+def has_health_contradiction(query, normalized_reply, sources, deep_profile):
+    if not asks_health_context_question(query) and not asks_self_description(query):
+        return False
+
+    has_health_context = bool(find_profile_health_facts(deep_profile))
+    if not has_health_context:
+        has_health_context = bool([
+            source
+            for source in sources
+            if any(term in normalize_for_match(source.get("text", "")) for term in ["estomago", "estomac", "digest", "gases", "acidez", "antiacido", "malestar"])
+        ])
+
+    if not has_health_context:
+        return False
+
+    contradiction_markers = [
+        "no hay problema",
+        "no tiene problemas",
+        "no tenia problemas",
+        "tenes un problema",
+        "tenes problema",
+        "tu problema con el estomago",
+    ]
+    return any(marker in normalized_reply for marker in contradiction_markers)
+
+
+def has_fact_report_leak(normalized_reply):
+    markers = [
+        "figuran como",
+        "confirmado por diego",
+        "dato confirmado",
+        "acordas y",
+    ]
+    return any(marker in normalized_reply for marker in markers)
 
 
 def build_recent_draft(confidence, sources, show_text):

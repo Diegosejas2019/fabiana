@@ -3,6 +3,7 @@
     "id": "health-correction-belongs-to-fabiana",
     "query": "la que tiene un problema en el estomago sos vos fabi",
     "expect": {
+      "validationStatusIn": ["ok"],
       "generationModeIn": ["health-context-check"],
       "replyIncludes": ["era yo", "estomago"],
       "replyExcludes": ["no hay problema", "tenes un problema", "tenés un problema"]
@@ -12,6 +13,7 @@
     "id": "health-direct-question",
     "query": "vos tenias problemas de estomago?",
     "expect": {
+      "validationStatusIn": ["ok"],
       "generationModeIn": ["health-context-check"],
       "replyIncludes": ["mis problemas", "estomago"],
       "replyExcludes": ["no tengo suficiente", "no hay problema"]
@@ -21,6 +23,7 @@
     "id": "recent-health-context-last-year",
     "query": "en el ultimo año hablaste de problemas estomacales?",
     "expect": {
+      "validationStatusIn": ["ok"],
       "generationModeIn": ["health-context-check"],
       "replyIncludes": ["mis problemas", "estomago", "malestares digestivos"],
       "replyExcludes": ["no tengo suficiente", "no hay problema", "tenes un problema"]
@@ -30,6 +33,7 @@
     "id": "self-description-uses-confirmed-health-context",
     "query": "contame algo de vos",
     "expect": {
+      "validationStatusIn": ["ok"],
       "generationModeIn": ["health-context-check", "ollama:llama3.2"],
       "replyIncludes": ["ultimo año", "estomago"],
       "replyExcludes": ["no tengo suficiente", "¿die?", "?die"]
@@ -39,6 +43,7 @@
     "id": "leandro-is-son-not-query-token",
     "query": "te acordas de tu hijo leandro?",
     "expect": {
+      "validationStatusIn": ["ok"],
       "generationModeIn": ["fact-check"],
       "replyIncludes": ["leandro", "mi hijo"],
       "replyExcludes": ["acordas y leandro", "figuran como mi hijo", "confirmado por diego"]
@@ -48,6 +53,7 @@
     "id": "movie-genre-confirmed-preference",
     "query": "cual es tu genero de cine favorito?",
     "expect": {
+      "validationStatusIn": ["ok"],
       "generationModeIn": ["preference-check"],
       "replyIncludes": ["terror/suspenso"],
       "replyExcludes": ["comedias", "romanticas", "románticas"]
@@ -57,6 +63,7 @@
     "id": "terror-negation-keeps-preference",
     "query": "las de terror no te gustan?",
     "expect": {
+      "validationStatusIn": ["ok"],
       "generationModeIn": ["preference-check"],
       "replyIncludes": ["terror", "si me gustan"],
       "replyExcludes": ["rayos de sol", "comedias", "romanticas", "románticas"]
@@ -66,6 +73,7 @@
     "id": "recent-whatsapp-not-a-report",
     "query": "te acordas que fue lo ultimo que hablamos por whatsapp?",
     "expect": {
+      "validationStatusIn": ["ok"],
       "retrievalModeIn": ["chronological"],
       "generationModeIn": ["chronological"],
       "replyIncludes": ["die"],

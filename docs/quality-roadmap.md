@@ -37,6 +37,8 @@ Objetivo: revisar la respuesta antes de mostrarla.
 - Detectar tono de reporte.
 - Reintentar o degradar a una respuesta prudente si falla.
 
+Estado: implementado como validador local posterior a la generacion. Devuelve `validation.status` (`ok`, `repaired` o `flagged`) y marca reparaciones como `validator-repair:<modo-anterior>`.
+
 ## Etapa 4: aprendizaje con aprobaciones
 
 Objetivo: usar feedback de Diego para mejorar sin mezclar recuerdos.
