@@ -31,6 +31,7 @@ def main():
     parser.add_argument("--persona-name", default="Fabi", help="Name to use for persona replies")
     parser.add_argument("--style-profile", default=None, help="Optional persona style profile JSON")
     parser.add_argument("--deep-profile", default=None, help="Optional deep persona profile JSON")
+    parser.add_argument("--history-json", default=None, help="Recent chat turns as JSON")
     parser.add_argument(
         "--llm-provider",
         default=os.environ.get("ANSWER_LLM_PROVIDER", "auto"),
@@ -50,6 +51,7 @@ def main():
     args = parser.parse_args()
     style_profile = read_optional_style_profile(args.style_profile)
     deep_profile = read_optional_deep_profile(args.deep_profile)
+    conversation_history = read_optional_history(args.history_json)
 
     index_dir = Path(args.index_dir)
     manifest = json.loads((index_dir / "embedding-manifest.json").read_text(encoding="utf-8"))
@@ -104,6 +106,7 @@ def main():
             args.ollama_url,
             style_profile,
             deep_profile,
+            conversation_history,
         )
 
     answer = {
@@ -451,7 +454,7 @@ def extract_meaning_keywords(text):
     return seen[:4]
 
 
-def build_persona_reply(query, confidence, sources, persona_name, llm_provider, ollama_model, ollama_url, style_profile, deep_profile):
+def build_persona_reply(query, confidence, sources, persona_name, llm_provider, ollama_model, ollama_url, style_profile, deep_profile, conversation_history):
     if confidence == "none":
         return (
             "No tengo un recuerdo claro de eso en lo que guardaste. "
@@ -464,8 +467,12 @@ def build_persona_reply(query, confidence, sources, persona_name, llm_provider, 
     second_text = clean_source_text(source_texts[1]) if len(source_texts) > 1 else ""
     lower_query = normalize_for_match(query)
 
+    preference_reply = build_preference_reply(lower_query, sources)
+    if preference_reply:
+        return preference_reply, "preference-check"
+
     if llm_provider in ("auto", "ollama") and source_texts:
-        generated = build_ollama_reply(query, sources, persona_name, ollama_model, ollama_url, style_profile, deep_profile)
+        generated = build_ollama_reply(query, sources, persona_name, ollama_model, ollama_url, style_profile, deep_profile, conversation_history)
         if generated:
             return generated, f"ollama:{ollama_model}"
 
@@ -481,13 +488,14 @@ def build_persona_reply(query, confidence, sources, persona_name, llm_provider, 
     return build_general_reply(top_text, second_text, dates), "fallback"
 
 
-def build_ollama_reply(query, sources, persona_name, model, url, style_profile, deep_profile):
+def build_ollama_reply(query, sources, persona_name, model, url, style_profile, deep_profile, conversation_history):
     prompt_sources = format_sources_for_prompt(sources)
     if not prompt_sources:
         return None
 
     style_prompt = format_style_profile_for_prompt(style_profile)
     deep_prompt = format_deep_profile_for_prompt(deep_profile)
+    history_prompt = format_history_for_prompt(conversation_history)
     system_prompt = (
         "Sos un motor de redaccion para una app privada de memoria familiar. "
         f"Redacta como {persona_name}: cercana, simple, afectuosa y natural. "
@@ -502,6 +510,7 @@ def build_ollama_reply(query, sources, persona_name, model, url, style_profile, 
         f"Pregunta de Diego:\n{query}\n\n"
         f"Perfil de estilo de Fabiana:\n{style_prompt}\n\n"
         f"Perfil profundo de Fabiana:\n{deep_prompt}\n\n"
+        f"Historial reciente de este chat:\n{history_prompt}\n\n"
         "Fuentes recuperadas (mensajes reales y datos personales confirmados):\n"
         f"{prompt_sources}\n\n"
         "Escribi una respuesta final nueva, como si Fabiana le respondiera ahora, manteniendote fiel a esas fuentes."
@@ -587,6 +596,26 @@ def read_optional_deep_profile(path):
     return json.loads(profile_path.read_text(encoding="utf-8"))
 
 
+def read_optional_history(raw_history):
+    if not raw_history:
+        return []
+    try:
+        rows = json.loads(raw_history)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(rows, list):
+        return []
+    history = []
+    for row in rows[-8:]:
+        if not isinstance(row, dict):
+            continue
+        role = str(row.get("role", "")).strip()
+        content = str(row.get("content", "")).strip()
+        if role in ["user", "assistant"] and content:
+            history.append({"role": role, "content": shorten(content, 500)})
+    return history
+
+
 def format_style_profile_for_prompt(profile):
     if not profile:
         return "No hay perfil de estilo calculado; usa solo las fuentes recuperadas."
@@ -633,6 +662,16 @@ def format_deep_profile_for_prompt(profile):
         parts.append(f"Relaciones confirmadas: {'; '.join(relation_rows)}.")
     parts.append("Los datos confirmados por Diego son contexto factual, no recuerdos ni estilo literal.")
     return "\n".join(parts)
+
+
+def format_history_for_prompt(history):
+    if not history:
+        return "Sin historial reciente."
+    labels = {
+        "user": "Diego",
+        "assistant": "Fabiana"
+    }
+    return "\n".join(f"{labels.get(row['role'], row['role'])}: {row['content']}" for row in history[-8:])
 
 
 def summarize_style_profile(profile):
@@ -938,6 +977,40 @@ def build_general_reply(top_text, second_text, dates):
         reply += f" Y tambien me aparece: \"{shorten(second_text, 140)}\"."
 
     return reply
+
+
+def build_preference_reply(query, sources):
+    if not asks_preference_question(query):
+        return None
+
+    direct_texts = [clean_source_text(source.get("text", "")) for source in sources if source.get("text")]
+    direct_norms = [(text, normalize_for_match(text)) for text in direct_texts]
+
+    if "terror" in query:
+        for text, normalized in direct_norms:
+            if "suspenso" in normalized and "terror" in normalized and ("soy mas" in normalized or "mas de" in normalized):
+                return "Si, die, las de terror si me gustan. Yo iba mas por suspenso y terror."
+            if "pelicula" in normalized and "terror" in normalized:
+                return "Si, die, las de terror me gustan. Me aparece que hablaba de una de terror para ver."
+
+    if ("genero" in query or "pelicula" in query or "peliculas" in query) and any("terror" in norm or "suspenso" in norm for _, norm in direct_norms):
+        return "Die, por lo que me aparece, yo era mas de suspenso y terror."
+
+    if any(word in query for word in ["gusta", "gustan", "encanta", "encantan"]):
+        strong = [
+            text
+            for text, normalized in direct_norms[:3]
+            if any(marker in normalized for marker in ["me gusta", "me gustan", "me encanta", "me encantan", "soy mas de"])
+        ]
+        if not strong:
+            return "No me aparece una fuente clara para decirte ese gusto con seguridad, die."
+
+    return None
+
+
+def asks_preference_question(query):
+    triggers = ["gusta", "gustan", "encanta", "encantan", "genero", "pelicula", "peliculas", "terror", "suspenso"]
+    return any(trigger in query for trigger in triggers)
 
 
 def clean_source_text(text):

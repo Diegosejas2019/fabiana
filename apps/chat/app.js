@@ -8,6 +8,7 @@ const sourceSummary = document.querySelector("#sourceSummary");
 const roleSelect = document.querySelector("#roleSelect");
 const sourceSelect = document.querySelector("#sourceSelect");
 const answerStore = new Map();
+const conversationTurns = [];
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -29,7 +30,8 @@ form.addEventListener("submit", async (event) => {
         query,
         role: roleSelect.value || null,
         sourceType: sourceSelect.value || null,
-        topK: 8
+        topK: 8,
+        history: conversationTurns.slice(-8)
       })
     });
 
@@ -39,6 +41,8 @@ form.addEventListener("submit", async (event) => {
 
     const answer = await response.json();
     appendAnswer(answer, query);
+    rememberTurn("user", query);
+    rememberTurn("assistant", answer.reply || answer.draft || "");
     renderSources(answer.sources ?? []);
     sourceSummary.textContent = `${answer.evidenceCount} fuentes - ${answer.confidence} - ${answer.retrievalMode ?? "semantic"}`;
   } catch (error) {
@@ -73,6 +77,16 @@ function appendAnswer(answer, query) {
   article.querySelector("[data-approve-id]")?.addEventListener("click", handleApproveAnswer);
   messages.append(article);
   article.scrollIntoView({ block: "end" });
+}
+
+function rememberTurn(role, content) {
+  if (!content) {
+    return;
+  }
+  conversationTurns.push({ role, content });
+  while (conversationTurns.length > 12) {
+    conversationTurns.shift();
+  }
 }
 
 async function handleApproveAnswer(event) {

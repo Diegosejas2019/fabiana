@@ -122,6 +122,10 @@ async function handleAnswer(request, response) {
     args.push("--source-type", String(payload.sourceType));
   }
 
+  if (Array.isArray(payload.history) && payload.history.length > 0) {
+    args.push("--history-json", JSON.stringify(payload.history.slice(-8)));
+  }
+
   const result = await runPython(args);
   response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
   response.end(result);
