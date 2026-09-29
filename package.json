@@ -14,6 +14,8 @@
     "transcription:run-local": ".venv\\Scripts\\python.exe scripts\\transcribe-faster-whisper.py",
     "transcription:compare": "node scripts/compare-transcription-runs.js",
     "facebook:import": "powershell -ExecutionPolicy Bypass -File .\\scripts\\import-facebook-messages.ps1",
+    "assertion:add": "node scripts/add-user-assertion.js",
+    "assertion:build": "node scripts/build-user-assertion-memories.js",
     "memory:build": "node packages/whatsapp-parser/src/cli.js memory-build",
     "memory:merge": "node scripts/merge-memories.js",
     "memory:chunk": "node packages/whatsapp-parser/src/cli.js memory-chunk",

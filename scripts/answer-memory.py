@@ -260,6 +260,8 @@ def classify_fact_confidence(sources, fact_terms):
     for source in sources:
         matches = source.get("factMatches", {})
         if matches.get("names") and matches.get("relations"):
+            if is_user_confirmed_source(source):
+                return "high"
             return "medium"
 
     return "none"
@@ -301,6 +303,9 @@ def build_fact_draft(confidence, sources, fact_terms):
             f"Hay {len(sources)} fuentes lexicas relacionadas, pero no alcanzan para afirmar el dato."
         )
 
+    if confidence == "high":
+        return f"Encontre una fuente manual confirmada por Diego que relaciona {relations} con {names}."
+
     return (
         f"Encontre fuentes relacionadas con {names} y {relations}, pero esta respuesta debe mantenerse cautelosa "
         "si la relacion no aparece declarada de forma explicita."
@@ -318,10 +323,18 @@ def build_fact_reply(confidence, sources, fact_terms):
             )
         return f"No encuentro una fuente clara para confirmar si {display_name} es {display_relation}."
 
+    if confidence == "high":
+        return f"Si, con el dato confirmado por Diego, {display_name} figura como {display_relation}."
+
     return (
         f"Lo tomaria con cautela: encontre menciones que relacionan a {display_name} con {display_relation}, "
         "pero conviene revisar las fuentes antes de darlo por confirmado."
     )
+
+
+def is_user_confirmed_source(source):
+    evidence = source.get("evidence") or {}
+    return source.get("sourceType") == "user_assertion" and evidence.get("confidence") == "user_confirmed"
 
 
 def build_recent_draft(confidence, sources, show_text):

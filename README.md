@@ -117,6 +117,16 @@ npm run persona:style -- data/processed/memory/memories.jsonl data/processed/per
 Esto genera un perfil privado con rasgos de forma de hablar. El perfil se usa solo como guia de estilo; los hechos siguen viniendo de fuentes recuperadas.
 Si ya combinaste WhatsApp + Facebook, usa `data/processed/combined-memory/memories.jsonl` como entrada.
 
+Para guardar datos confirmados por Diego desde la app local, escribe una frase con intencion de guardado:
+
+```text
+dato: los hijos de Fabiana se llaman ...
+recorda que ...
+te confirmo que ...
+```
+
+La app guarda esos datos como `user_assertion`, los convierte en memoria privada, recompone `data/processed/combined-memory` y vuelve a crear embeddings. Esos datos aparecen como fuente manual confirmada y se usan para preguntas de hechos basicos, pero no se usan como muestra de estilo de Fabiana.
+
 Para crear embeddings locales:
 
 ```bash
