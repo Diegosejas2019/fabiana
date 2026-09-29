@@ -27,8 +27,10 @@
               Fuente
               <select id="sourceSelect">
                 <option value="">Todas</option>
-                <option value="whatsapp_text">Texto</option>
-                <option value="audio_transcript">Audio</option>
+                <option value="whatsapp_text">WhatsApp texto</option>
+                <option value="audio_transcript">WhatsApp audio</option>
+                <option value="facebook_text">Facebook</option>
+                <option value="user_assertion">Datos personales</option>
               </select>
             </label>
           </div>
@@ -37,7 +39,7 @@
         <div id="messages" class="messages" aria-live="polite">
           <article class="bubble assistant">
             <div class="bubble-meta">Sistema</div>
-            <p>Pregunta algo y voy a buscar recuerdos reales con fuentes.</p>
+            <p>Pregunta algo y voy a buscar mensajes reales, audios y datos personales confirmados.</p>
           </article>
         </div>
 
@@ -49,7 +51,7 @@
 
       <aside class="sources-pane" aria-label="Fuentes">
         <header>
-          <h2>Recuerdos usados</h2>
+          <h2>Fuentes usadas</h2>
           <p id="sourceSummary">Sin consulta</p>
         </header>
         <div id="sources" class="sources"></div>

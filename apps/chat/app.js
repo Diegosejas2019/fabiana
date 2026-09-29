@@ -95,7 +95,7 @@ function renderSources(rows) {
     item.innerHTML = `
       <summary>
         <div class="source-title">
-          <span>${escapeHtml(row.localDate)} - ${escapeHtml(row.sourceType)}</span>
+          <span>${escapeHtml(row.localDate)} - ${escapeHtml(displaySourceType(row.sourceType))}</span>
           <span>${row.score.toFixed(3)}</span>
         </div>
         <div class="source-meta">${escapeHtml(row.messageId)} - ${escapeHtml(row.role)}</div>
@@ -104,6 +104,16 @@ function renderSources(rows) {
     `;
     sources.append(item);
   }
+}
+
+function displaySourceType(sourceType) {
+  const labels = {
+    user_assertion: "dato personal",
+    whatsapp_text: "WhatsApp texto",
+    audio_transcript: "WhatsApp audio",
+    facebook_text: "Facebook"
+  };
+  return labels[sourceType] ?? sourceType;
 }
 
 function setLoading(loading) {
