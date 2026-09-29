@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import re
 import sys
 import unicodedata
 import urllib.error
@@ -624,49 +625,65 @@ def asks_recent_conversation(query):
     return any(trigger in query for trigger in triggers)
 
 
+FAMILY_RELATION_TERMS = [
+    "hijos",
+    "hijas",
+    "hijo",
+    "hija",
+    "hermano",
+    "hermana",
+    "sobrinos",
+    "sobrinas",
+    "sobrino",
+    "sobrina",
+    "primos",
+    "primas",
+    "primo",
+    "prima",
+    "tios",
+    "tias",
+    "tio",
+    "tia",
+    "abuelos",
+    "abuelas",
+    "abuelo",
+    "abuela",
+    "marido",
+    "esposo",
+    "perritos",
+    "perritas",
+    "perrito",
+    "perrita",
+    "perros",
+    "perras",
+    "perro",
+    "perra",
+    "gatitos",
+    "gatitas",
+    "gatito",
+    "gatita",
+    "gatos",
+    "gatas",
+    "gato",
+    "gata",
+    "mascotas",
+    "mascota",
+    "mama",
+    "papa",
+    "madre",
+    "padre",
+]
+
+
 def asks_identity_fact(query):
-    relation_terms = [
-        "hijos",
-        "hijas",
-        "hijo",
-        "hija",
-        "hermano",
-        "hermana",
-        "sobrino",
-        "sobrina",
-        "sobrinos",
-        "sobrinas",
-        "marido",
-        "esposo",
-        "mama",
-        "papa",
-        "madre",
-        "padre",
-    ]
+    relation_terms = FAMILY_RELATION_TERMS
     identity_triggers = ["se llama", "llama", "es tu", "tu ", "tus "]
-    return any(term in query for term in relation_terms) and any(trigger in query for trigger in identity_triggers)
+    return any(contains_word(query, term) for term in relation_terms) and any(trigger in query for trigger in identity_triggers)
 
 
 def extract_fact_terms(query):
-    relation_terms = [
-        "hijos",
-        "hijas",
-        "hijo",
-        "hija",
-        "hermano",
-        "hermana",
-        "sobrino",
-        "sobrina",
-        "sobrinos",
-        "sobrinas",
-        "marido",
-        "esposo",
-        "mama",
-        "papa",
-        "madre",
-        "padre",
-    ]
-    relations = [term for term in relation_terms if term in query]
+    relation_terms = FAMILY_RELATION_TERMS
+    relations = [term for term in relation_terms if contains_word(query, term)]
     stop_words = {
         "hola",
         "recordas",
@@ -680,8 +697,11 @@ def extract_fact_terms(query):
         "se",
         "llama",
         "llaman",
+        "llamaba",
+        "llamaban",
         "es",
         "son",
+        "sus",
         "fa",
     }
     names = [
@@ -697,14 +717,48 @@ def extract_fact_terms(query):
 
 def relation_matches(relation, text):
     if relation in ["hijo", "hijos"]:
-        return "hijo" in text or "hijos" in text
+        return contains_any_word(text, ["hijo", "hijos"])
     if relation in ["hija", "hijas"]:
-        return "hija" in text or "hijas" in text
+        return contains_any_word(text, ["hija", "hijas"])
+    if relation in ["hermano", "hermanos"]:
+        return contains_any_word(text, ["hermano", "hermanos"])
+    if relation in ["hermana", "hermanas"]:
+        return contains_any_word(text, ["hermana", "hermanas"])
     if relation in ["sobrino", "sobrinos"]:
-        return "sobrino" in text or "sobrinos" in text
+        return contains_any_word(text, ["sobrino", "sobrinos"])
     if relation in ["sobrina", "sobrinas"]:
-        return "sobrina" in text or "sobrinas" in text
-    return relation in text
+        return contains_any_word(text, ["sobrina", "sobrinas"])
+    if relation in ["primo", "primos"]:
+        return contains_any_word(text, ["primo", "primos"])
+    if relation in ["prima", "primas"]:
+        return contains_any_word(text, ["prima", "primas"])
+    if relation in ["tio", "tios"]:
+        return contains_any_word(text, ["tio", "tios"])
+    if relation in ["tia", "tias"]:
+        return contains_any_word(text, ["tia", "tias"])
+    if relation in ["abuelo", "abuelos"]:
+        return contains_any_word(text, ["abuelo", "abuelos"])
+    if relation in ["abuela", "abuelas"]:
+        return contains_any_word(text, ["abuela", "abuelas"])
+    if relation in ["perrito", "perritos", "perro", "perros"]:
+        return contains_any_word(text, ["perrito", "perritos", "perro", "perros"])
+    if relation in ["perrita", "perritas", "perra", "perras"]:
+        return contains_any_word(text, ["perrita", "perritas", "perra", "perras"])
+    if relation in ["gatito", "gatitos", "gato", "gatos"]:
+        return contains_any_word(text, ["gatito", "gatitos", "gato", "gatos"])
+    if relation in ["gatita", "gatitas", "gata", "gatas"]:
+        return contains_any_word(text, ["gatita", "gatitas", "gata", "gatas"])
+    if relation in ["mascota", "mascotas"]:
+        return contains_any_word(text, ["mascota", "mascotas"])
+    return contains_word(text, relation)
+
+
+def contains_any_word(text, terms):
+    return any(contains_word(text, term) for term in terms)
+
+
+def contains_word(text, term):
+    return re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", text) is not None
 
 
 def display_fact_name(fact_terms):
@@ -734,8 +788,16 @@ def display_fact_relation(fact_terms):
         return f"mi {relation}"
     if relation in ["sobrinos", "sobrinas"]:
         return f"mis {relation}"
+    if relation in ["primo", "prima", "tio", "tia", "abuelo", "abuela"]:
+        return f"mi {relation}"
+    if relation in ["primos", "primas", "tios", "tias", "abuelos", "abuelas"]:
+        return f"mis {relation}"
     if relation in ["marido", "esposo"]:
         return f"mi {relation}"
+    if relation in ["perrito", "perrita", "perro", "perra", "gatito", "gatita", "gato", "gata", "mascota"]:
+        return f"mi {relation}"
+    if relation in ["perritos", "perritas", "perros", "perras", "gatitos", "gatitas", "gatos", "gatas", "mascotas"]:
+        return f"mis {relation}"
     return relation
 
 
