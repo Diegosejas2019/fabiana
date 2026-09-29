@@ -70,6 +70,16 @@
     }
   },
   {
+    "id": "relation-query-tenes-is-not-a-name",
+    "query": "tenes algo para decir sobre tu hijo?",
+    "expect": {
+      "validationStatusIn": ["ok"],
+      "generationModeIn": ["profile-relation-check"],
+      "replyIncludes": ["leandro", "mi hijo", "18"],
+      "replyExcludes": ["tenes", "menciones a tenes", "no puedo confirmarlo", "no una fuente directa"]
+    }
+  },
+  {
     "id": "contextual-pronoun-resolves-leandro",
     "query": "decime algo acerca de el",
     "history": [
