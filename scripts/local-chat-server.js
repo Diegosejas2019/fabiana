@@ -30,6 +30,7 @@ const defaultIndexDir = resolve(root, "data/processed/rag");
 const styleProfilePath = resolve(root, "data/processed/persona/persona-style.json");
 const deepProfilePath = resolve(root, "data/processed/persona/deep-profile.json");
 const approvedResponsesPath = resolve(root, "data/processed/feedback/approved-responses.jsonl");
+const responseFeedbackPath = resolve(root, "data/processed/feedback/response-feedback.jsonl");
 const port = Number(process.env.PORT ?? 4173);
 let assertionQueue = Promise.resolve();
 
@@ -56,6 +57,11 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "POST" && url.pathname === "/api/feedback/approve") {
       await handleApprovedResponse(request, response);
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/feedback/review") {
+      await handleResponseFeedback(request, response);
       return;
     }
 
@@ -114,6 +120,10 @@ async function handleAnswer(request, response) {
     args.push("--deep-profile", deepProfilePath);
   }
 
+  if (existsSync(responseFeedbackPath)) {
+    args.push("--feedback", responseFeedbackPath);
+  }
+
   if (payload.role) {
     args.push("--role", String(payload.role));
   }
@@ -160,6 +170,7 @@ async function handleApprovedResponse(request, response) {
   const row = buildApprovedResponseRow(payload, query, reply);
   await mkdir(dirname(approvedResponsesPath), { recursive: true });
   await appendFile(approvedResponsesPath, `${JSON.stringify(row)}\n`, "utf8");
+  await appendFeedbackRow(buildResponseFeedbackRow(payload, query, reply, "approved"));
 
   response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
   response.end(
@@ -169,6 +180,42 @@ async function handleApprovedResponse(request, response) {
         id: row.id,
         outputPath: approvedResponsesPath,
         approvedAt: row.approvedAt
+      },
+      null,
+      2
+    )
+  );
+}
+
+async function handleResponseFeedback(request, response) {
+  const body = await readBody(request);
+  const payload = JSON.parse(body || "{}");
+  const query = String(payload.query ?? "").trim();
+  const reply = String(payload.reply ?? "").trim();
+  const rating = String(payload.rating ?? "").trim();
+
+  if (!query || !reply || !["approved", "rejected", "corrected"].includes(rating)) {
+    response.writeHead(400).end("Missing query, reply or valid rating");
+    return;
+  }
+
+  const row = buildResponseFeedbackRow(payload, query, reply, rating);
+  await appendFeedbackRow(row);
+
+  if (rating === "approved") {
+    const approved = buildApprovedResponseRow(payload, query, reply);
+    await mkdir(dirname(approvedResponsesPath), { recursive: true });
+    await appendFile(approvedResponsesPath, `${JSON.stringify(approved)}\n`, "utf8");
+  }
+
+  response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+  response.end(
+    JSON.stringify(
+      {
+        ok: true,
+        id: row.id,
+        outputPath: responseFeedbackPath,
+        reviewedAt: row.reviewedAt
       },
       null,
       2
@@ -204,6 +251,49 @@ function buildApprovedResponseRow(payload, query, reply) {
       text: source.text ?? null
     }))
   };
+}
+
+function buildResponseFeedbackRow(payload, query, reply, rating) {
+  const reviewedAt = new Date().toISOString();
+  const sources = Array.isArray(payload.sources) ? payload.sources : [];
+  const correctedReply = String(payload.correctedReply ?? "").trim();
+  const reason = String(payload.reason ?? "").trim();
+  const notes = String(payload.notes ?? "").trim();
+  return {
+    schemaVersion: 1,
+    id: `feedback_${reviewedAt.replace(/[-:.TZ]/g, "").slice(0, 17)}`,
+    reviewedAt,
+    reviewedBy: "Diego",
+    rating,
+    reason: reason || null,
+    notes: notes || null,
+    query,
+    reply,
+    correctedReply: correctedReply || null,
+    confidence: payload.confidence ?? null,
+    retrievalMode: payload.retrievalMode ?? null,
+    generationMode: payload.generationMode ?? null,
+    validation: payload.validation ?? null,
+    styleProfile: payload.styleProfile ?? null,
+    deepProfile: payload.deepProfile ?? null,
+    sourceCount: sources.length,
+    sources: sources.map((source) => ({
+      score: source.score ?? null,
+      memoryId: source.memoryId ?? null,
+      messageId: source.messageId ?? null,
+      timestamp: source.timestamp ?? null,
+      localDate: source.localDate ?? null,
+      localTime: source.localTime ?? null,
+      role: source.role ?? null,
+      sourceType: source.sourceType ?? null,
+      text: source.text ?? null
+    }))
+  };
+}
+
+async function appendFeedbackRow(row) {
+  await mkdir(dirname(responseFeedbackPath), { recursive: true });
+  await appendFile(responseFeedbackPath, `${JSON.stringify(row)}\n`, "utf8");
 }
 
 function extractAssertionText(query) {

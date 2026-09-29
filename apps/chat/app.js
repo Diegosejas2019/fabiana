@@ -72,9 +72,33 @@ function appendAnswer(answer, query) {
     <div class="bubble-actions">
       <span class="confidence ${answer.confidence}">${answer.confidence}</span>
       <button class="approve-button" type="button" data-approve-id="${answerId}">Confiable</button>
+      <button class="reject-button" type="button" data-reject-id="${answerId}">No confiable</button>
+      <button class="correct-button" type="button" data-correct-id="${answerId}">Corregir</button>
     </div>
+    <form class="feedback-panel" data-feedback-panel="${answerId}" hidden>
+      <label>
+        Motivo
+        <select name="reason">
+          <option value="subject_confusion">Confunde quien es quien</option>
+          <option value="invented_fact">Inventa datos</option>
+          <option value="quote_or_report">Cita o suena a reporte</option>
+          <option value="bad_style">No suena natural</option>
+          <option value="wrong_memory">Recuerdo incorrecto</option>
+          <option value="other">Otro</option>
+        </select>
+      </label>
+      <textarea name="correctedReply" rows="3" placeholder="Escribi como deberia responder mejor"></textarea>
+      <div class="feedback-actions">
+        <button type="submit">Guardar correccion</button>
+        <button type="button" data-cancel-feedback="${answerId}">Cancelar</button>
+      </div>
+    </form>
   `;
   article.querySelector("[data-approve-id]")?.addEventListener("click", handleApproveAnswer);
+  article.querySelector("[data-reject-id]")?.addEventListener("click", handleRejectAnswer);
+  article.querySelector("[data-correct-id]")?.addEventListener("click", handleShowCorrection);
+  article.querySelector("[data-cancel-feedback]")?.addEventListener("click", handleCancelCorrection);
+  article.querySelector("[data-feedback-panel]")?.addEventListener("submit", handleSaveCorrection);
   messages.append(article);
   article.scrollIntoView({ block: "end" });
 }
@@ -101,20 +125,7 @@ async function handleApproveAnswer(event) {
   button.textContent = "Guardando";
 
   try {
-    const response = await fetch("/api/feedback/approve", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: answer.query,
-        reply: answer.reply || answer.draft || "",
-        confidence: answer.confidence,
-        retrievalMode: answer.retrievalMode,
-        generationMode: answer.generationMode,
-        styleProfile: answer.styleProfile,
-        deepProfile: answer.deepProfile,
-        sources: answer.sources ?? []
-      })
-    });
+    const response = await sendFeedback(answer, { rating: "approved" });
 
     if (!response.ok) {
       throw new Error(await response.text());
@@ -127,6 +138,115 @@ async function handleApproveAnswer(event) {
     button.textContent = "Confiable";
     console.error(error);
   }
+}
+
+async function handleRejectAnswer(event) {
+  const button = event.currentTarget;
+  const answerId = button.dataset.rejectId;
+  const answer = answerStore.get(answerId);
+  if (!answer) {
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = "Guardando";
+
+  try {
+    const response = await sendFeedback(answer, {
+      rating: "rejected",
+      reason: "not_reliable"
+    });
+
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+
+    button.textContent = "Guardada";
+    button.classList.add("rejected");
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = "No confiable";
+    console.error(error);
+  }
+}
+
+function handleShowCorrection(event) {
+  const answerId = event.currentTarget.dataset.correctId;
+  const panel = document.querySelector(`[data-feedback-panel="${answerId}"]`);
+  if (panel) {
+    panel.hidden = false;
+    panel.querySelector("textarea")?.focus();
+  }
+}
+
+function handleCancelCorrection(event) {
+  const answerId = event.currentTarget.dataset.cancelFeedback;
+  const panel = document.querySelector(`[data-feedback-panel="${answerId}"]`);
+  if (panel) {
+    panel.hidden = true;
+  }
+}
+
+async function handleSaveCorrection(event) {
+  event.preventDefault();
+  const panel = event.currentTarget;
+  const answerId = panel.dataset.feedbackPanel;
+  const answer = answerStore.get(answerId);
+  if (!answer) {
+    return;
+  }
+
+  const submit = panel.querySelector("button[type='submit']");
+  const formData = new FormData(panel);
+  const correctedReply = String(formData.get("correctedReply") ?? "").trim();
+  const reason = String(formData.get("reason") ?? "other");
+
+  if (!correctedReply) {
+    panel.querySelector("textarea")?.focus();
+    return;
+  }
+
+  submit.disabled = true;
+  submit.textContent = "Guardando";
+
+  try {
+    const response = await sendFeedback(answer, {
+      rating: "corrected",
+      reason,
+      correctedReply
+    });
+
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+
+    submit.textContent = "Guardada";
+    panel.classList.add("saved");
+  } catch (error) {
+    submit.disabled = false;
+    submit.textContent = "Guardar correccion";
+    console.error(error);
+  }
+}
+
+function sendFeedback(answer, feedback) {
+  return fetch("/api/feedback/review", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ...feedback,
+      query: answer.query,
+      reply: answer.reply || answer.draft || "",
+      confidence: answer.confidence,
+      retrievalMode: answer.retrievalMode,
+      generationMode: answer.generationMode,
+      validation: answer.validation,
+      styleProfile: answer.styleProfile,
+      deepProfile: answer.deepProfile,
+      feedbackProfile: answer.feedbackProfile,
+      sources: answer.sources ?? []
+    })
+  });
 }
 
 function appendMessage(kind, label, text) {

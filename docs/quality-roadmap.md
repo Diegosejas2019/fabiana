@@ -48,6 +48,8 @@ Objetivo: usar feedback de Diego para mejorar sin mezclar recuerdos.
 - Permitir correccion manual de una respuesta mala.
 - Usar aprobaciones como ejemplos de estilo, no como hechos nuevos.
 
+Estado: implementado con feedback unificado en `data/processed/feedback/response-feedback.jsonl`. La app permite aprobar, rechazar y corregir respuestas; Ollama recibe ejemplos aprobados/corregidos como guia de calidad, no como memoria ni fuente factual.
+
 ## Etapa 5: proveedores externos opcionales
 
 Objetivo: sumar calidad generativa sin perder control local.

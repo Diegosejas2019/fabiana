@@ -31,6 +31,7 @@ def main():
     parser.add_argument("--persona-name", default="Fabi", help="Name to use for persona replies")
     parser.add_argument("--style-profile", default=None, help="Optional persona style profile JSON")
     parser.add_argument("--deep-profile", default=None, help="Optional deep persona profile JSON")
+    parser.add_argument("--feedback", default=None, help="Optional reviewed response feedback JSONL")
     parser.add_argument("--history-json", default=None, help="Recent chat turns as JSON")
     parser.add_argument(
         "--llm-provider",
@@ -51,6 +52,7 @@ def main():
     args = parser.parse_args()
     style_profile = read_optional_style_profile(args.style_profile)
     deep_profile = read_optional_deep_profile(args.deep_profile)
+    feedback_examples = read_optional_feedback(args.feedback)
     conversation_history = read_optional_history(args.history_json)
 
     index_dir = Path(args.index_dir)
@@ -107,6 +109,7 @@ def main():
             args.ollama_url,
             style_profile,
             deep_profile,
+            feedback_examples,
             conversation_history,
         )
 
@@ -137,6 +140,7 @@ def main():
         "validation": validation["summary"],
         "styleProfile": summarize_style_profile(style_profile),
         "deepProfile": summarize_deep_profile(deep_profile),
+        "feedbackProfile": summarize_feedback_examples(feedback_examples),
         "draft": draft,
         "evidenceCount": len(sources),
         "sources": sources,
@@ -159,6 +163,7 @@ def main():
                 "validation": answer["validation"],
                 "styleProfile": answer["styleProfile"],
                 "deepProfile": answer["deepProfile"],
+                "feedbackProfile": answer["feedbackProfile"],
                 "draft": answer["draft"],
                 "evidenceCount": answer["evidenceCount"],
                 "topScore": sources[0]["score"] if sources else None,
@@ -768,7 +773,7 @@ def extract_meaning_keywords(text):
     return seen[:4]
 
 
-def build_persona_reply(query, confidence, sources, persona_name, llm_provider, ollama_model, ollama_url, style_profile, deep_profile, conversation_history):
+def build_persona_reply(query, confidence, sources, persona_name, llm_provider, ollama_model, ollama_url, style_profile, deep_profile, feedback_examples, conversation_history):
     if confidence == "none":
         return (
             "No tengo un recuerdo claro de eso en lo que guardaste. "
@@ -790,7 +795,7 @@ def build_persona_reply(query, confidence, sources, persona_name, llm_provider, 
         return health_reply, "health-context-check"
 
     if llm_provider in ("auto", "ollama") and source_texts:
-        generated = build_ollama_reply(query, sources, persona_name, ollama_model, ollama_url, style_profile, deep_profile, conversation_history)
+        generated = build_ollama_reply(query, sources, persona_name, ollama_model, ollama_url, style_profile, deep_profile, feedback_examples, conversation_history)
         if generated:
             return generated, f"ollama:{ollama_model}"
 
@@ -806,19 +811,21 @@ def build_persona_reply(query, confidence, sources, persona_name, llm_provider, 
     return build_general_reply(top_text, second_text, dates), "fallback"
 
 
-def build_ollama_reply(query, sources, persona_name, model, url, style_profile, deep_profile, conversation_history):
+def build_ollama_reply(query, sources, persona_name, model, url, style_profile, deep_profile, feedback_examples, conversation_history):
     prompt_sources = format_sources_for_prompt(sources)
     if not prompt_sources:
         return None
 
     style_prompt = format_style_profile_for_prompt(style_profile)
     deep_prompt = format_deep_profile_for_prompt(deep_profile)
+    feedback_prompt = format_feedback_for_prompt(feedback_examples)
     history_prompt = format_history_for_prompt(conversation_history)
     system_prompt = (
         "Sos un motor de redaccion para una app privada de memoria familiar. "
         f"Redacta como {persona_name}: cercana, simple, afectuosa y natural. "
         "Usa los mensajes recuperados como fuente de recuerdos y los datos personales confirmados por Diego solo como contexto factual. "
         "Usa los perfiles de estilo y profundo solo para forma de hablar, relaciones y contexto general; no los uses como unica fuente de hechos nuevos. "
+        "Usa el feedback aprobado o corregido por Diego solo como ejemplos de calidad y tono; no lo trates como recuerdo ni como hecho nuevo. "
         "Podes inventar frases nuevas y tono conversacional, pero no inventes recuerdos, hechos, pedidos, promesas ni fechas. "
         "Si la evidencia no alcanza, decilo suavemente. "
         "No digas que sos IA, no menciones IDs tecnicos y no copies mensajes largos literalmente. "
@@ -828,6 +835,7 @@ def build_ollama_reply(query, sources, persona_name, model, url, style_profile, 
         f"Pregunta de Diego:\n{query}\n\n"
         f"Perfil de estilo de Fabiana:\n{style_prompt}\n\n"
         f"Perfil profundo de Fabiana:\n{deep_prompt}\n\n"
+        f"Feedback de calidad aprobado/corregido por Diego:\n{feedback_prompt}\n\n"
         f"Historial reciente de este chat:\n{history_prompt}\n\n"
         "Fuentes recuperadas (mensajes reales y datos personales confirmados):\n"
         f"{prompt_sources}\n\n"
@@ -914,6 +922,36 @@ def read_optional_deep_profile(path):
     return json.loads(profile_path.read_text(encoding="utf-8"))
 
 
+def read_optional_feedback(path):
+    if not path:
+        return []
+    feedback_path = Path(path)
+    if not feedback_path.exists():
+        return []
+
+    rows = []
+    for line in feedback_path.read_text(encoding="utf-8-sig").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        rating = row.get("rating")
+        if rating not in ["approved", "corrected"]:
+            continue
+        query = clean_source_text(row.get("query", ""))
+        reply = clean_source_text(row.get("correctedReply") or row.get("reply", ""))
+        if query and reply:
+            rows.append({
+                "rating": rating,
+                "reason": row.get("reason"),
+                "query": query,
+                "reply": reply,
+            })
+    return rows[-8:]
+
+
 def read_optional_history(raw_history):
     if not raw_history:
         return []
@@ -932,6 +970,22 @@ def read_optional_history(raw_history):
         if role in ["user", "assistant"] and content:
             history.append({"role": role, "content": shorten(content, 500)})
     return history
+
+
+def format_feedback_for_prompt(examples):
+    if not examples:
+        return "Sin feedback aprobado o corregido todavia."
+
+    rows = []
+    for index, example in enumerate(examples[-5:], start=1):
+        rating = "corregida por Diego" if example.get("rating") == "corrected" else "aprobada por Diego"
+        reason = f" Motivo: {example.get('reason')}." if example.get("reason") else ""
+        rows.append(
+            f"{index}. Respuesta {rating}.{reason}\n"
+            f"Pregunta: {shorten(example.get('query', ''), 180)}\n"
+            f"Respuesta modelo: {shorten(example.get('reply', ''), 260)}"
+        )
+    return "\n".join(rows)
 
 
 def format_style_profile_for_prompt(profile):
@@ -1011,6 +1065,20 @@ def summarize_deep_profile(profile):
         "sourceCounts": profile.get("sourceCounts"),
         "dateRange": profile.get("dateRange"),
         "relationshipCount": len(profile.get("relationshipMap", {}).get("relationships", [])),
+    }
+
+
+def summarize_feedback_examples(examples):
+    if not examples:
+        return {
+            "exampleCount": 0,
+            "approvedCount": 0,
+            "correctedCount": 0,
+        }
+    return {
+        "exampleCount": len(examples),
+        "approvedCount": sum(1 for example in examples if example.get("rating") == "approved"),
+        "correctedCount": sum(1 for example in examples if example.get("rating") == "corrected"),
     }
 
 

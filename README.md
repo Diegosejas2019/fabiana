@@ -145,6 +145,14 @@ La app guarda esos datos como `user_assertion`, los convierte en memoria privada
 
 Las respuestas marcadas como confiables desde la app se guardan en `data/processed/feedback/approved-responses.jsonl`. Ese archivo es un dataset privado de aprobaciones de Diego: no se mezcla con recuerdos reales ni datos personales, y queda listo para evaluar prompts, construir ejemplos de respuesta o entrenar una capa posterior.
 
+La app tambien guarda feedback unificado en `data/processed/feedback/response-feedback.jsonl`:
+
+- `approved`: respuesta confiable.
+- `rejected`: respuesta no confiable.
+- `corrected`: respuesta corregida manualmente por Diego.
+
+Ese feedback se usa como guia de calidad para redactar mejor con Ollama, pero no se mezcla con recuerdos reales ni con datos personales confirmados.
+
 Para crear embeddings locales:
 
 ```bash
