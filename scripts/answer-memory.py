@@ -85,7 +85,8 @@ def main():
         generation_mode = "chronological"
     elif asks_identity_fact(normalized_query):
         retrieval_mode = "fact"
-        fact_terms = extract_fact_terms(normalized_query)
+        family_entities = build_family_entity_index(deep_profile)
+        fact_terms = extract_fact_terms(normalized_query, family_entities)
         profile_reply = build_profile_relation_reply(normalized_query, fact_terms, deep_profile)
         if profile_reply and not fact_terms["names"]:
             sources = []
@@ -1237,6 +1238,8 @@ FAMILY_RELATION_TERMS = [
     "abuelas",
     "abuelo",
     "abuela",
+    "companero",
+    "pareja",
     "marido",
     "esposo",
     "perritos",
@@ -1264,90 +1267,139 @@ FAMILY_RELATION_TERMS = [
 ]
 
 
+FACT_NAME_STOP_WORDS = {
+    "hola",
+    "fabi",
+    "fabiana",
+    "die",
+    "diego",
+    "acordas",
+    "acordaste",
+    "recordas",
+    "recorda",
+    "recuerdas",
+    "recuerda",
+    "acordar",
+    "recordar",
+    "contame",
+    "decime",
+    "decir",
+    "decirme",
+    "algo",
+    "acerca",
+    "sobre",
+    "para",
+    "cual",
+    "cuales",
+    "como",
+    "quien",
+    "que",
+    "de",
+    "del",
+    "el",
+    "la",
+    "mi",
+    "mis",
+    "tus",
+    "tu",
+    "te",
+    "se",
+    "llama",
+    "llaman",
+    "llamaba",
+    "llamaban",
+    "es",
+    "son",
+    "tenes",
+    "tienes",
+    "tiene",
+    "tengo",
+    "tenia",
+    "tenias",
+    "tenian",
+    "hablame",
+    "hablar",
+    "hablando",
+    "podes",
+    "puedes",
+    "podrias",
+    "decis",
+    "sus",
+    "fa",
+    "los",
+    "las",
+    "un",
+    "una",
+    "y",
+}
+
+
 def asks_identity_fact(query):
     relation_terms = FAMILY_RELATION_TERMS
     identity_triggers = ["se llama", "llama", "es tu", "tu ", "tus "]
     return any(contains_word(query, term) for term in relation_terms) and any(trigger in query for trigger in identity_triggers)
 
 
-def extract_fact_terms(query):
+def extract_fact_terms(query, family_entities=None):
     relation_terms = FAMILY_RELATION_TERMS
     relations = [term for term in relation_terms if contains_word(query, term)]
-    stop_words = {
-        "hola",
-        "fabi",
-        "fabiana",
-        "die",
-        "diego",
-        "acordas",
-        "acordaste",
-        "recordas",
-        "recorda",
-        "recuerdas",
-        "recuerda",
-        "acordar",
-        "recordar",
-        "contame",
-        "decime",
-        "decir",
-        "decirme",
-        "algo",
-        "acerca",
-        "sobre",
-        "para",
-        "cual",
-        "cuales",
-        "como",
-        "quien",
-        "que",
-        "de",
-        "del",
-        "el",
-        "la",
-        "mi",
-        "mis",
-        "tus",
-        "tu",
-        "te",
-        "se",
-        "llama",
-        "llaman",
-        "llamaba",
-        "llamaban",
-        "es",
-        "son",
-        "tenes",
-        "tienes",
-        "tiene",
-        "tengo",
-        "tenia",
-        "tenias",
-        "tenian",
-        "hablame",
-        "hablar",
-        "hablando",
-        "podes",
-        "puedes",
-        "podrias",
-        "decis",
-        "sus",
-        "fa",
-        "los",
-        "las",
-        "un",
-        "una",
-        "y",
-    }
-    tokens = re.findall(r"[a-z0-9]+", query)
-    names = [
-        word
-        for word in tokens
-        if len(word) > 3 and word not in stop_words and word not in relation_terms
-    ]
+    names = resolve_family_entity_names(query, family_entities or [])
     return {
         "names": unique_items(names),
         "relations": unique_items(relations),
     }
+
+
+def build_family_entity_index(deep_profile):
+    if not deep_profile:
+        return []
+
+    entities = {}
+    for relation in deep_profile.get("relationshipMap", {}).get("relationships", []):
+        for key in ["subject", "object"]:
+            name = str(relation.get(key) or "").strip()
+            if not is_profile_name_candidate(name):
+                continue
+            normalized = normalize_for_match(name)
+            entity = entities.setdefault(normalized, {
+                "name": name,
+                "aliases": set(),
+                "relations": [],
+            })
+            entity["aliases"].add(normalized)
+            entity["aliases"].add(normalized.replace(" ", ""))
+            entity["relations"].append({
+                "subject": relation.get("subject"),
+                "relation": relation.get("relation"),
+                "object": relation.get("object"),
+            })
+
+    for entity in entities.values():
+        entity["aliases"] = sorted(alias for alias in entity["aliases"] if alias)
+
+    return list(entities.values())
+
+
+def resolve_family_entity_names(query, family_entities):
+    if not family_entities:
+        return fallback_fact_names(query)
+
+    matched = []
+    for entity in family_entities:
+        aliases = entity.get("aliases", [])
+        if any(alias and contains_word(query, alias) for alias in aliases):
+            matched.append(normalize_for_match(entity["name"]))
+    return matched
+
+
+def fallback_fact_names(query):
+    stop_words = FACT_NAME_STOP_WORDS | set(FAMILY_RELATION_TERMS)
+    tokens = re.findall(r"[a-z0-9]+", query)
+    return [
+        word
+        for word in tokens
+        if len(word) > 3 and word not in stop_words
+    ]
 
 
 def relation_matches(relation, text):
@@ -1676,7 +1728,143 @@ def build_profile_relation_reply(query, fact_terms, deep_profile):
 
         return format_children_reply(children)
 
+    relation_rows = profile_relation_rows(deep_profile, relations)
+    if relation_rows:
+        return format_relation_rows_reply(relation_rows)
+
     return None
+
+
+def profile_relation_rows(deep_profile, requested_relations):
+    rows = []
+    seen = set()
+
+    def add_row(name, relation_name):
+        clean_name = str(name or "").strip()
+        clean_relation = canonical_profile_relation(relation_name)
+        if not clean_name or not clean_relation:
+            return
+        if not any(relation_matches_request(clean_relation, requested) for requested in requested_relations):
+            return
+        key = (normalize_for_match(clean_name), clean_relation)
+        if key in seen:
+            return
+        seen.add(key)
+        rows.append({
+            "name": clean_name,
+            "relation": clean_relation,
+        })
+
+    for relation in deep_profile.get("relationshipMap", {}).get("relationships", []):
+        subject = normalize_for_match(relation.get("subject", ""))
+        if subject != "fabiana":
+            continue
+        add_row(relation.get("object"), relation.get("relation"))
+
+    for relation in profile_biography_relation_rows(deep_profile):
+        add_row(relation["name"], relation["relation"])
+
+    return rows
+
+
+def profile_biography_relation_rows(deep_profile):
+    rows = []
+    highlights = deep_profile.get("biography", {}).get("highlights", [])
+    relation_pattern = r"(marido|esposo|companero|pareja|perrito|perro|gatito|gato)"
+    name_pattern = r"([A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñ]+)"
+
+    for highlight in highlights:
+        text = str(highlight.get("text") or "")
+        if not text:
+            continue
+
+        for match in re.finditer(rf"\b{name_pattern}\s+es\s+(?:el\s+|la\s+)?{relation_pattern}\s+de\s+Fabiana\b", text, re.IGNORECASE):
+            rows.append({
+                "name": match.group(1),
+                "relation": match.group(2),
+            })
+
+        for match in re.finditer(rf"\b(?:el|la)\s+{relation_pattern}\s+de\s+Fabiana\s+se\s+llama(?:ba)?\s+{name_pattern}\b", text, re.IGNORECASE):
+            rows.append({
+                "name": match.group(2),
+                "relation": match.group(1),
+            })
+
+    return rows
+
+
+def canonical_profile_relation(relation):
+    relation_name = normalize_for_match(relation)
+    aliases = {
+        "companero": "marido",
+        "pareja": "marido",
+        "esposo": "marido",
+        "perritos": "perrito",
+        "perritas": "perrito",
+        "perros": "perrito",
+        "perras": "perrito",
+        "perro": "perrito",
+        "perra": "perrito",
+        "gatitos": "gatito",
+        "gatitas": "gatito",
+        "gatos": "gatito",
+        "gatas": "gatito",
+        "gato": "gatito",
+        "gata": "gatito",
+    }
+    return aliases.get(relation_name, relation_name)
+
+
+def relation_matches_request(actual, requested):
+    actual = canonical_profile_relation(actual)
+    requested = canonical_profile_relation(requested)
+    groups = [
+        {"marido", "esposo", "companero", "pareja"},
+        {"perrito", "perritos", "perro", "perros", "mascota", "mascotas"},
+        {"gatito", "gatitos", "gato", "gatos", "mascota", "mascotas"},
+        {"prima", "primas", "primo", "primos"},
+        {"tia", "tias", "tio", "tios"},
+        {"abuela", "abuelas", "abuelo", "abuelos"},
+        {"hermano", "hermanos", "hermana", "hermanas"},
+        {"sobrina", "sobrinas", "sobrino", "sobrinos"},
+    ]
+    if actual == requested:
+        return True
+    return any(actual in group and requested in group for group in groups)
+
+
+def format_relation_rows_reply(rows):
+    relation = rows[0]["relation"]
+    names = format_name_list([row["name"] for row in rows])
+    if len(rows) == 1:
+        return f"Si, die, {names} es {display_relation_from_profile(relation)}."
+    return f"Si, die, {names} son {display_plural_relation_from_profile(relation)}."
+
+
+def display_relation_from_profile(relation):
+    if relation in ["marido", "esposo"]:
+        return "mi marido"
+    if relation in ["perrito", "perro"]:
+        return "mi perrito"
+    if relation in ["gatito", "gato"]:
+        return "mi gatito"
+    if relation in ["prima", "primo", "tia", "tio", "abuela", "abuelo", "hermano", "hermana", "sobrina", "sobrino"]:
+        return f"mi {relation}"
+    return f"mi {relation}"
+
+
+def display_plural_relation_from_profile(relation):
+    if relation in ["perrito", "perro"]:
+        return "mis perritos"
+    if relation in ["gatito", "gato"]:
+        return "mis gatitos"
+    if relation in ["prima", "primo"]:
+        return "mis primas" if relation == "prima" else "mis primos"
+    if relation in ["tia", "tio"]:
+        return "mis tias" if relation == "tia" else "mis tios"
+    if relation in ["sobrina", "sobrino"]:
+        return "mis sobrinas" if relation == "sobrina" else "mis sobrinos"
+    return f"mis {relation}s"
 
 
 def profile_children(deep_profile):

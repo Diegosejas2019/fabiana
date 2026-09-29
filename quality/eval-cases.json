@@ -80,6 +80,26 @@
     }
   },
   {
+    "id": "husband-relation-uses-profile-entity",
+    "query": "como se llama tu marido?",
+    "expect": {
+      "validationStatusIn": ["ok"],
+      "generationModeIn": ["profile-relation-check"],
+      "replyIncludes": ["osvaldo", "mi marido"],
+      "replyExcludes": ["como", "llama", "no puedo confirmarlo"]
+    }
+  },
+  {
+    "id": "pets-relation-uses-profile-entity",
+    "query": "como se llaman tus perritos?",
+    "expect": {
+      "validationStatusIn": ["ok"],
+      "generationModeIn": ["profile-relation-check"],
+      "replyIncludes": ["tilin", "toto"],
+      "replyExcludes": ["como", "llaman", "no puedo confirmarlo"]
+    }
+  },
+  {
     "id": "contextual-pronoun-resolves-leandro",
     "query": "decime algo acerca de el",
     "history": [
