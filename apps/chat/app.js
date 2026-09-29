@@ -58,7 +58,7 @@ function appendAnswer(answer) {
   const style = answer.styleProfile ? ` - Estilo: ${answer.styleProfile.sampleCount} muestras` : "";
   const mode = `Busqueda: ${retrieval} - Respuesta: ${generation}${style}`;
   article.innerHTML = `
-    <div class="bubble-meta">Fabiana (sintesis con fuentes)</div>
+    <div class="bubble-meta">Fabiana</div>
     <p>${escapeHtml(reply)}</p>
     <div class="bubble-note">${escapeHtml(mode)}</div>
     <span class="confidence ${answer.confidence}">${answer.confidence}</span>

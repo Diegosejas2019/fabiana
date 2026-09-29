@@ -361,19 +361,15 @@ def build_recent_draft(confidence, sources, show_text):
 
 def build_recent_reply(sources, show_text):
     if not sources:
-        return "No me aparecen mensajes recientes suficientes para responderte con fecha."
+        return "No me aparece un intercambio reciente suficiente para contestarte bien."
 
     latest = sources[0]
-    speaker = display_speaker(latest)
     text = clean_source_text(latest.get("text", ""))
 
     if show_text and text:
-        return build_latest_message_sentence(latest, speaker, text)
+        return build_latest_message_sentence(latest, text)
 
-    return (
-        f"Lo ultimo que encuentro esta fechado el {latest['localDate']} a las {latest['localTime']}. "
-        "Te dejo las fuentes al costado para ver el texto exacto."
-    )
+    return "Si, die. Me aparece el ultimo intercambio, pero prefiero dejar el detalle exacto solo en las fuentes."
 
 
 def display_speaker(source):
@@ -384,35 +380,37 @@ def display_speaker(source):
     return source["role"]
 
 
-def build_latest_message_sentence(source, speaker, text):
+def build_latest_message_sentence(source, text):
     summary = summarize_message_meaning(source, text)
     if source["role"] == "self":
-        return f"Lo ultimo que encuentro fue un mensaje tuyo del {source['localDate']} a las {source['localTime']}; {summary}."
-    return f"Lo ultimo que encuentro fue un mensaje de {speaker} del {source['localDate']} a las {source['localTime']}; {summary}."
+        return f"Si, die. Lo ultimo fue que vos {summary}."
+    if source["role"] == "targetPerson":
+        return f"Si, die. Lo ultimo fue que yo {summary}."
+    return f"Si, die. Lo ultimo fue algo relacionado con esto: {summary}."
 
 
 def summarize_message_meaning(source, text):
     normalized = normalize_for_match(text)
 
     if "cargar" in normalized and "dato" in normalized:
-        return "el tema era que no se podian cargar los datos"
+        return "estaba hablando de unos datos que no se podian cargar"
 
     if "veo" in normalized and "manana" in normalized:
         if source["role"] == "self":
-            return "le estabas diciendo que la veias al dia siguiente"
-        return "hablaba de verse al dia siguiente"
+            return "me decias que me veias al dia siguiente"
+        return "hablaba de vernos al dia siguiente"
 
     if "gracias" in normalized:
-        return "era un agradecimiento breve"
+        return "agradecia algo cortito"
 
     if "buen dia" in normalized or "buenos dias" in normalized:
-        return "era un saludo de buen dia"
+        return "saludaba con un buen dia"
 
     keywords = extract_meaning_keywords(normalized)
     if keywords:
-        return f"el tema giraba alrededor de {', '.join(keywords)}"
+        return f"hablaba de {', '.join(keywords)}"
 
-    return "lo dejo en las fuentes para no copiarlo textual"
+    return "prefiero dejar el detalle exacto en las fuentes para no copiarlo textual"
 
 
 def extract_meaning_keywords(text):
