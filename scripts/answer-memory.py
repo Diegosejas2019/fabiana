@@ -339,8 +339,8 @@ def build_fact_reply(confidence, sources, fact_terms):
         return f"No encuentro una fuente clara para confirmar si {display_name} es {display_relation}."
 
     if confidence == "high":
-        verb = "figuran" if len(fact_terms["names"]) > 1 else "figura"
-        return f"Si, con el dato confirmado por Diego, {display_names} {verb} como {display_relation}."
+        verb = "son" if len(fact_terms["names"]) > 1 else "es"
+        return f"Si, die, {display_names} {verb} {display_relation}."
 
     return (
         f"Lo tomaria con cautela: encontre menciones que relacionan a {display_name} con {display_relation}, "
@@ -797,14 +797,25 @@ def extract_fact_terms(query):
     relations = [term for term in relation_terms if contains_word(query, term)]
     stop_words = {
         "hola",
+        "acordas",
+        "acordaste",
         "recordas",
+        "recorda",
         "recuerdas",
+        "recuerda",
         "cual",
         "como",
         "quien",
         "que",
+        "de",
+        "del",
+        "el",
+        "la",
+        "mi",
+        "mis",
         "tus",
         "tu",
+        "te",
         "se",
         "llama",
         "llaman",
@@ -899,6 +910,10 @@ def display_fact_relation(fact_terms):
         return f"mi {relation}"
     if relation in ["sobrinos", "sobrinas"]:
         return f"mis {relation}"
+    if relation in ["hermano", "hermana"]:
+        return f"mi {relation}"
+    if relation in ["hermanos", "hermanas"]:
+        return f"mis {relation}"
     if relation in ["primo", "prima", "tio", "tia", "abuelo", "abuela"]:
         return f"mi {relation}"
     if relation in ["primos", "primas", "tios", "tias", "abuelos", "abuelas"]:
@@ -983,24 +998,44 @@ def build_preference_reply(query, sources):
     if not asks_preference_question(query):
         return None
 
-    direct_texts = [clean_source_text(source.get("text", "")) for source in sources if source.get("text")]
-    direct_norms = [(text, normalize_for_match(text)) for text in direct_texts]
+    direct_rows = [
+        {
+            "text": clean_source_text(source.get("text", "")),
+            "normalized": normalize_for_match(source.get("text", "")),
+            "sourceType": source.get("sourceType"),
+        }
+        for source in sources
+        if source.get("text")
+    ]
+
+    has_confirmed_movie_preference = any(
+        row["sourceType"] == "user_assertion"
+        and "genero favorito" in row["normalized"]
+        and "terror" in row["normalized"]
+        and "suspenso" in row["normalized"]
+        for row in direct_rows
+    )
 
     if "terror" in query:
-        for text, normalized in direct_norms:
+        if has_confirmed_movie_preference:
+            return "Si, die, las de terror si me gustan. Mi genero favorito era terror/suspenso."
+        for row in direct_rows:
+            normalized = row["normalized"]
             if "suspenso" in normalized and "terror" in normalized and ("soy mas" in normalized or "mas de" in normalized):
                 return "Si, die, las de terror si me gustan. Yo iba mas por suspenso y terror."
             if "pelicula" in normalized and "terror" in normalized:
                 return "Si, die, las de terror me gustan. Me aparece que hablaba de una de terror para ver."
 
-    if ("genero" in query or "pelicula" in query or "peliculas" in query) and any("terror" in norm or "suspenso" in norm for _, norm in direct_norms):
-        return "Die, por lo que me aparece, yo era mas de suspenso y terror."
+    if ("genero" in query or "pelicula" in query or "peliculas" in query) and any("terror" in row["normalized"] or "suspenso" in row["normalized"] for row in direct_rows):
+        if has_confirmed_movie_preference:
+            return "Die, mi genero favorito era terror/suspenso."
+        return "Die, yo era mas de suspenso y terror."
 
     if any(word in query for word in ["gusta", "gustan", "encanta", "encantan"]):
         strong = [
-            text
-            for text, normalized in direct_norms[:3]
-            if any(marker in normalized for marker in ["me gusta", "me gustan", "me encanta", "me encantan", "soy mas de"])
+            row["text"]
+            for row in direct_rows[:3]
+            if any(marker in row["normalized"] for marker in ["me gusta", "me gustan", "me encanta", "me encantan", "soy mas de"])
         ]
         if not strong:
             return "No me aparece una fuente clara para decirte ese gusto con seguridad, die."
