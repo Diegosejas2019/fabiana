@@ -92,6 +92,7 @@ const profile = {
     last: personaMessages.at(-1)?.localDate ?? null
   },
   voicebook: buildVoicebook(sampledMessages),
+  familyAliases: buildFamilyAliases(userAssertions),
   relationshipMap: buildRelationshipMap(userAssertions),
   biography: buildBiography(userAssertions),
   usagePolicy: {
@@ -206,6 +207,10 @@ function buildPromptSummary(profile) {
     .slice(0, 18)
     .map((item) => `${item.subject} -> ${item.relation} -> ${item.object}`)
     .join("; ");
+  const aliasLines = profile.familyAliases
+    .slice(0, 10)
+    .map((item) => `${item.name}: ${item.aliases.join(", ")}`)
+    .join("; ");
 
   return [
     `Voz: ${cues || "conversacional, simple y cercana"}.`,
@@ -213,6 +218,7 @@ function buildPromptSummary(profile) {
     phrases ? `Formas frecuentes: ${phrases}.` : null,
     emojis ? `Emojis frecuentes: ${emojis}.` : null,
     relationLines ? `Mapa familiar confirmado por Diego: ${relationLines}.` : null,
+    aliasLines ? `Alias familiares confirmados por Diego: ${aliasLines}.` : null,
     "Regla: los datos confirmados por Diego son contexto factual, no recuerdos ni estilo de Fabiana."
   ]
     .filter(Boolean)
@@ -284,6 +290,79 @@ function extractRelationships(sentence, assertion) {
   });
 
   return rows;
+}
+
+function buildFamilyAliases(assertions) {
+  const aliases = [];
+  for (const assertion of assertions) {
+    const sentences = splitSentences(assertion.text);
+    for (const sentence of sentences) {
+      aliases.push(...extractFamilyAliases(sentence, assertion));
+    }
+  }
+  return dedupeFamilyAliases(aliases);
+}
+
+function extractFamilyAliases(sentence, assertion) {
+  const normalized = normalize(sentence);
+  const rows = [];
+  const source = {
+    sourceId: assertion.messageId,
+    sourceType: assertion.sourceType,
+    confidence: assertion.evidence?.confidence ?? "user_confirmed"
+  };
+
+  const pattern = /(?:fabiana\s+)?(?:tambien\s+)?(?:se\s+puede\s+referir\s+)?a\s+su\s+(hijo|hija)\s+([\w]+)\s+como\s+(.+?)(?=,?\s+y\s+a\s+su\b|[.;]|$)/gu;
+  for (const match of normalized.matchAll(pattern)) {
+    const relation = match[1];
+    const name = titleName(match[2]);
+    const aliasText = match[3];
+    const aliasList = splitAliases(aliasText).map(titleName).filter(Boolean);
+    if (name && aliasList.length > 0) {
+      rows.push({
+        name,
+        relation,
+        aliases: aliasList,
+        ...source
+      });
+    }
+  }
+
+  return rows;
+}
+
+function splitAliases(text) {
+  return String(text)
+    .replace(/\.$/, "")
+    .split(/\s*,\s*|\s+o\s+|\s+y\s+/u)
+    .map((alias) => firstName(alias.trim()))
+    .filter(Boolean);
+}
+
+function dedupeFamilyAliases(rows) {
+  const byName = new Map();
+  for (const row of rows) {
+    const key = row.name.toLowerCase();
+    const current = byName.get(key) ?? {
+      name: row.name,
+      relation: row.relation,
+      aliases: [],
+      sources: []
+    };
+    current.aliases.push(...row.aliases);
+    current.sources.push({
+      sourceId: row.sourceId,
+      sourceType: row.sourceType,
+      confidence: row.confidence
+    });
+    byName.set(key, current);
+  }
+
+  return Array.from(byName.values()).map((item) => ({
+    ...item,
+    aliases: Array.from(new Set(item.aliases)),
+    sources: item.sources
+  }));
 }
 
 function matchList(text, regex, callback) {

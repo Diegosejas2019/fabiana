@@ -60,6 +60,36 @@
     }
   },
   {
+    "id": "leandro-alias-lea-resolves-to-son",
+    "query": "te acordas de tu hijo lea?",
+    "expect": {
+      "validationStatusIn": ["ok"],
+      "generationModeIn": ["fact-check"],
+      "replyIncludes": ["leandro", "mi hijo"],
+      "replyExcludes": ["lea es mi hijo", "no puedo confirmarlo"]
+    }
+  },
+  {
+    "id": "agustina-alias-agus-resolves-to-daughter",
+    "query": "contame algo de agus",
+    "expect": {
+      "validationStatusIn": ["ok"],
+      "generationModeIn": ["profile-person-check"],
+      "replyIncludes": ["agustina", "mi hija", "16"],
+      "replyExcludes": ["agus es mi hija", "no tengo suficiente"]
+    }
+  },
+  {
+    "id": "bianca-alias-bian-resolves-to-daughter",
+    "query": "quien es bian?",
+    "expect": {
+      "validationStatusIn": ["ok"],
+      "generationModeIn": ["profile-person-check"],
+      "replyIncludes": ["bianca", "mi hija", "10"],
+      "replyExcludes": ["bian es mi hija", "no tengo suficiente"]
+    }
+  },
+  {
     "id": "relation-query-without-name-uses-profile",
     "query": "contame algo sobre tu hijo",
     "expect": {

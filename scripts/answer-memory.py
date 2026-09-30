@@ -1048,6 +1048,25 @@ def profile_known_names(deep_profile):
     return unique_items(candidates)
 
 
+def resolve_profile_person_names(query, deep_profile):
+    entities = build_family_entity_index(deep_profile)
+    matched = resolve_family_entity_names(query, entities)
+    if matched:
+        names_by_normalized = {
+            normalize_for_match(entity.get("name", "")): entity.get("name", "")
+            for entity in entities
+            if entity.get("name")
+        }
+        return unique_items([names_by_normalized.get(name, name.capitalize()) for name in matched])
+
+    names = profile_known_names(deep_profile)
+    return [
+        name
+        for name in names
+        if contains_word(query, normalize_for_match(name))
+    ]
+
+
 def is_profile_name_candidate(value):
     if not value:
         return False
@@ -1373,6 +1392,29 @@ def build_family_entity_index(deep_profile):
                 "relation": relation.get("relation"),
                 "object": relation.get("object"),
             })
+
+    for alias_row in deep_profile.get("familyAliases", []):
+        name = str(alias_row.get("name") or "").strip()
+        if not is_profile_name_candidate(name):
+            continue
+        normalized = normalize_for_match(name)
+        entity = entities.setdefault(normalized, {
+            "name": name,
+            "aliases": set(),
+            "relations": [],
+        })
+        entity["aliases"].add(normalized)
+        entity["aliases"].add(normalized.replace(" ", ""))
+        for alias in alias_row.get("aliases", []):
+            normalized_alias = normalize_for_match(alias)
+            if normalized_alias:
+                entity["aliases"].add(normalized_alias)
+                entity["aliases"].add(normalized_alias.replace(" ", ""))
+        entity["relations"].append({
+            "subject": "Fabiana",
+            "relation": alias_row.get("relation"),
+            "object": name,
+        })
 
     for entity in entities.values():
         entity["aliases"] = sorted(alias for alias in entity["aliases"] if alias)
@@ -1934,12 +1976,7 @@ def find_profile_person_facts(query, deep_profile):
     if not deep_profile:
         return []
 
-    names = profile_known_names(deep_profile)
-    matched_names = [
-        name
-        for name in names
-        if contains_word(query, normalize_for_match(name))
-    ]
+    matched_names = resolve_profile_person_names(query, deep_profile)
     if not matched_names:
         return []
 
