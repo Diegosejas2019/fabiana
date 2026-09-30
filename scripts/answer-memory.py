@@ -808,6 +808,10 @@ def build_persona_reply(query, confidence, sources, persona_name, llm_provider, 
     if person_reply:
         return person_reply, "profile-person-check"
 
+    family_mention_reply = build_family_mention_reply(lower_query, deep_profile)
+    if family_mention_reply:
+        return family_mention_reply, "family-mention-check"
+
     if llm_provider in ("auto", "ollama") and source_texts:
         generated = build_ollama_reply(query, sources, persona_name, ollama_model, ollama_url, style_profile, deep_profile, feedback_examples, conversation_history)
         if generated:
@@ -1749,6 +1753,61 @@ def build_profile_person_reply(query, deep_profile):
     rewritten = rewrite_profile_fact_first_person(text)
     if rewritten:
         return f"Si, die, {rewritten}"
+
+    return None
+
+
+def build_family_mention_reply(query, deep_profile):
+    if not is_family_conversation_statement(query):
+        return None
+
+    matched_names = resolve_profile_person_names(query, deep_profile)
+    if not matched_names:
+        return None
+
+    name = matched_names[0]
+    relation = profile_relation_for_person(name, deep_profile)
+    if not relation:
+        return None
+
+    if any(term in query for term in ["hable", "hablaste", "hablando", "charle", "charlaste", "charlando"]):
+        return f"Ay die, que bueno que hayas hablado con {name}. {name} es mi {relation}."
+
+    if any(term in query for term in ["vi a", "viste a", "estuve con", "me encontre", "me cruce"]):
+        return f"Ay die, que lindo. {name} es mi {relation}."
+
+    return f"Si, die, {name} es mi {relation}."
+
+
+def is_family_conversation_statement(query):
+    triggers = [
+        "hable",
+        "hablaste",
+        "hablando",
+        "charle",
+        "charlaste",
+        "charlando",
+        "vi a",
+        "viste a",
+        "estuve con",
+        "me encontre",
+        "me cruce",
+    ]
+    return any(trigger in query for trigger in triggers)
+
+
+def profile_relation_for_person(name, deep_profile):
+    normalized_name = normalize_for_match(name)
+    for relation in deep_profile.get("relationshipMap", {}).get("relationships", []):
+        subject = normalize_for_match(relation.get("subject", ""))
+        relation_name = normalize_for_match(relation.get("relation", ""))
+        object_name = normalize_for_match(relation.get("object", ""))
+        if subject == "fabiana" and object_name == normalized_name and relation_name in ["hijo", "hija", "hermano", "hermana", "sobrina", "sobrino"]:
+            return relation_name
+
+    for alias_row in deep_profile.get("familyAliases", []):
+        if normalize_for_match(alias_row.get("name", "")) == normalized_name:
+            return normalize_for_match(alias_row.get("relation", ""))
 
     return None
 

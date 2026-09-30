@@ -90,6 +90,16 @@
     }
   },
   {
+    "id": "family-mention-conversation-uses-leandro-context",
+    "query": "hola fabi,ayer estuve hablando con leandro",
+    "expect": {
+      "validationStatusIn": ["ok"],
+      "generationModeIn": ["family-mention-check"],
+      "replyIncludes": ["leandro", "mi hijo"],
+      "replyExcludes": ["ya estoy bien", "gracias a dios", "no tengo suficiente"]
+    }
+  },
+  {
     "id": "relation-query-without-name-uses-profile",
     "query": "contame algo sobre tu hijo",
     "expect": {
