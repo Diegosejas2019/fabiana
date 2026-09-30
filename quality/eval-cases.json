@@ -40,6 +40,26 @@
     }
   },
   {
+    "id": "self-description-sobre-vos-not-hijacked-by-family-context",
+    "query": "contame algo sobre vos fabi",
+    "history": [
+      {
+        "role": "user",
+        "content": "te acordas de tu hijo leandro?"
+      },
+      {
+        "role": "assistant",
+        "content": "Si, die, Leandro es mi hijo. Tiene 18 años."
+      }
+    ],
+    "expect": {
+      "validationStatusIn": ["ok"],
+      "generationModeIn": ["health-context-check"],
+      "replyIncludes": ["ultimo año", "estomago"],
+      "replyExcludes": ["leandro", "mi hijo", "mas pequeño", "personalidad grande"]
+    }
+  },
+  {
     "id": "leandro-is-son-not-query-token",
     "query": "te acordas de tu hijo leandro?",
     "expect": {
@@ -137,6 +157,16 @@
       "generationModeIn": ["profile-relation-check"],
       "replyIncludes": ["tilin", "toto"],
       "replyExcludes": ["como", "llaman", "no puedo confirmarlo"]
+    }
+  },
+  {
+    "id": "abu-short-form-resolves-to-grandmother",
+    "query": "te acordas de la abu?",
+    "expect": {
+      "validationStatusIn": ["ok"],
+      "generationModeIn": ["profile-relation-check"],
+      "replyIncludes": ["berta", "mi abuela"],
+      "replyExcludes": ["todavia no me acuerdo", "mi abuela berta", "recordar algo"]
     }
   },
   {

@@ -1261,6 +1261,8 @@ FAMILY_RELATION_TERMS = [
     "abuelas",
     "abuelo",
     "abuela",
+    "abue",
+    "abu",
     "companero",
     "pareja",
     "marido",
@@ -1359,7 +1361,7 @@ FACT_NAME_STOP_WORDS = {
 
 def asks_identity_fact(query):
     relation_terms = FAMILY_RELATION_TERMS
-    identity_triggers = ["se llama", "llama", "es tu", "tu ", "tus "]
+    identity_triggers = ["se llama", "llama", "es tu", "tu ", "tus ", "te acordas de", "recordas a", "recordas de"]
     return any(contains_word(query, term) for term in relation_terms) and any(trigger in query for trigger in identity_triggers)
 
 
@@ -1701,7 +1703,7 @@ def asks_health_context_question(query):
 
 
 def asks_self_description(query):
-    triggers = ["contame algo de vos", "hablame de vos", "contame de vos", "algo de vos"]
+    triggers = ["contame algo de vos", "contame algo sobre vos", "hablame de vos", "hablame sobre vos", "contame de vos", "contame sobre vos", "algo de vos", "algo sobre vos"]
     return any(trigger in query for trigger in triggers)
 
 
@@ -1897,6 +1899,8 @@ def profile_biography_relation_rows(deep_profile):
 def canonical_profile_relation(relation):
     relation_name = normalize_for_match(relation)
     aliases = {
+        "abu": "abuela",
+        "abue": "abuela",
         "companero": "marido",
         "pareja": "marido",
         "esposo": "marido",
@@ -1925,7 +1929,7 @@ def relation_matches_request(actual, requested):
         {"gatito", "gatitos", "gato", "gatos", "mascota", "mascotas"},
         {"prima", "primas", "primo", "primos"},
         {"tia", "tias", "tio", "tios"},
-        {"abuela", "abuelas", "abuelo", "abuelos"},
+        {"abu", "abue", "abuela", "abuelas", "abuelo", "abuelos"},
         {"hermano", "hermanos", "hermana", "hermanas"},
         {"sobrina", "sobrinas", "sobrino", "sobrinos"},
     ]
