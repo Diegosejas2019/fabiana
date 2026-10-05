@@ -328,6 +328,18 @@
     }
   },
   {
+    "id": "simple-check-in-stays-light-dialogue",
+    "query": "Hola fa,como estas?",
+    "expect": {
+      "validationStatusIn": ["ok"],
+      "intentKindIn": ["dialogue"],
+      "retrievalModeIn": ["dialogue"],
+      "generationModeIn": ["dialogue"],
+      "replyIncludes": ["hola die", "te leo"],
+      "replyExcludes": ["me duele", "no puedo seguir", "estoy en paz", "siempre los ame", "corazon", "orgullosa de mis hijos"]
+    }
+  },
+  {
     "id": "contextual-pronoun-resolves-leandro",
     "query": "decime algo acerca de el",
     "history": [

@@ -1387,6 +1387,9 @@ def classify_query_intent(original_query, effective_query, history, deep_profile
     if asks_identity_fact(normalized_query) and not asks_deeper_profile_person_context(normalized_query):
         return build_intent("fact", "dato familiar", "fact", "profile", response_mode)
 
+    if is_simple_check_in(normalized_query):
+        return build_intent("dialogue", "saludo cotidiano", "dialogue", "none", response_mode)
+
     if is_dialogue_update(normalized_query):
         return build_intent("dialogue", "dialogo actual", "dialogue", "none", response_mode)
 
@@ -2315,6 +2318,30 @@ def is_dialogue_update(query):
     return any(query.startswith(opener) for opener in openers) and any(marker in padded for marker in first_person_markers)
 
 
+def is_simple_check_in(query):
+    compact = re.sub(r"[^a-z0-9ñ ]+", " ", query)
+    compact = re.sub(r"\s+", " ", compact).strip()
+    padded = f" {compact} "
+    if any(marker in padded for marker in [" te acordas ", " recordas ", " acordas ", " contame ", " decime ", " hablame "]):
+        return False
+    if any(marker in padded for marker in [" hijo", " hija", " chicos", " estomago", " medico", " problema", " recuerdo"]):
+        return False
+
+    check_in_markers = [
+        "como estas",
+        "como andas",
+        "como va",
+        "todo bien",
+        "estas bien",
+        "que haces",
+    ]
+    if not any(marker in compact for marker in check_in_markers):
+        return False
+
+    words = [word for word in compact.split() if word not in ["hola", "buenas", "buen", "dia", "fabi", "fabiana", "fa"]]
+    return len(words) <= 5
+
+
 def is_question_like(query):
     question_starts = [
         "que ",
@@ -2336,6 +2363,9 @@ def is_question_like(query):
 
 
 def build_dialogue_reply(query, original_query):
+    if is_simple_check_in(query):
+        return "Hola die, aca estoy, te leo. Y vos, como estas?"
+
     if any(term in query for term in ["medico", "doctor", "turno", "consulta", "hospital", "clinica"]):
         when = "mañana" if "manana" in query else "hoy" if "hoy" in query else ""
         when_text = f" {when}" if when else ""
