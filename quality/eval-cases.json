@@ -54,9 +54,93 @@
     ],
     "expect": {
       "validationStatusIn": ["ok"],
+      "intentKindIn": ["health_context"],
+      "sourceTypeIncludes": ["conversation_context"],
       "generationModeIn": ["health-context-check"],
       "replyIncludes": ["ultimo año", "estomago"],
       "replyExcludes": ["leandro", "mi hijo", "mas pequeño", "personalidad grande"]
+    }
+  },
+  {
+    "id": "los-chicos-resolves-to-children-not-cousins",
+    "query": "quienes son los chicos?",
+    "history": [
+      {
+        "role": "user",
+        "content": "Contame algo sobre vos fabi"
+      },
+      {
+        "role": "assistant",
+        "content": "Die, te puedo contar que en el ultimo año venia hablando bastante de mis problemas del estomago y de malestares digestivos. Tambien estaba muy pendiente de los chicos y de las cosas de todos los dias."
+      }
+    ],
+    "expect": {
+      "validationStatusIn": ["ok"],
+      "generationModeIn": ["children-context-check"],
+      "replyIncludes": ["mis hijos", "leandro", "agustina", "bianca"],
+      "replyExcludes": ["primas", "daiana", "naty", "betiana", "las primas mio"]
+    }
+  },
+  {
+    "id": "los-chicos-pending-topic-expands-care-context",
+    "query": "bien, me comentaste que estuviste muy pendiente de los chicos, contame mas sobre ese tema",
+    "history": [
+      {
+        "role": "user",
+        "content": "Contame algo sobre vos fabi"
+      },
+      {
+        "role": "assistant",
+        "content": "Die, te puedo contar que en el ultimo año venia hablando bastante de mis problemas del estomago y de malestares digestivos. Tambien estaba muy pendiente de los chicos y de las cosas de todos los dias."
+      }
+    ],
+    "expect": {
+      "validationStatusIn": ["ok"],
+      "generationModeIn": ["children-context-check", "children-memory-check"],
+      "replyIncludes": ["leandro", "agustina", "bianca", "estuvieran bien"],
+      "replyExcludes": ["primas", "daiana", "naty", "betiana", "tiene 18", "tiene 16", "tiene 10"]
+    }
+  },
+  {
+    "id": "children-past-event-uses-backup-context",
+    "query": "Decime algo que haya pasado con ellos",
+    "history": [
+      {
+        "role": "user",
+        "content": "contame mas sobre los chicos"
+      },
+      {
+        "role": "assistant",
+        "content": "Si, die, cuando digo los chicos hablo de mis hijos: Leandro tiene 18 años, Agustina tiene 16 años y Bianca tiene 10 años."
+      }
+    ],
+    "expect": {
+      "validationStatusIn": ["ok"],
+      "intentKindIn": ["children_memory"],
+      "sourceTypeIncludes": ["conversation_context"],
+      "generationModeIn": ["children-memory-check"],
+      "replyIncludes": ["leandro", "agustina", "bianca", "escuela"],
+      "replyExcludes": ["no estoy aqui", "no puedo hablar", "estoy en paz", "siempre estare contigo", "primas", "daiana", "naty", "betiana"]
+    }
+  },
+  {
+    "id": "children-past-event-clarification-uses-backup-context",
+    "query": "Me refiero a algo que haya pasado con ellos en tiempo pasado",
+    "history": [
+      {
+        "role": "user",
+        "content": "contame mas sobre los chicos"
+      },
+      {
+        "role": "assistant",
+        "content": "Si, die, cuando digo los chicos hablo de mis hijos: Leandro tiene 18 años, Agustina tiene 16 años y Bianca tiene 10 años."
+      }
+    ],
+    "expect": {
+      "validationStatusIn": ["ok"],
+      "generationModeIn": ["children-memory-check"],
+      "replyIncludes": ["leandro", "agustina", "bianca", "rutina"],
+      "replyExcludes": ["no estoy aqui", "no puedo hablar", "estoy en paz", "siempre estare contigo", "primas", "daiana", "naty", "betiana"]
     }
   },
   {
@@ -90,6 +174,28 @@
     }
   },
   {
+    "id": "leandro-deeper-question-uses-source-context",
+    "query": "contame mas sobre leandro",
+    "expect": {
+      "validationStatusIn": ["ok"],
+      "generationModeIn": ["profile-person-memory-check"],
+      "replyIncludes": ["leandro", "ayud", "bianca", "sentia mal"],
+      "replyExcludes": ["Leandro es mi hijo. Tiene 18", "no tengo suficiente"]
+    }
+  },
+  {
+    "id": "leandro-deeper-question-with-relation-uses-source-context",
+    "query": "contame algo más sobre leandro, tu hijo",
+    "expect": {
+      "validationStatusIn": ["ok"],
+      "intentKindIn": ["person_memory"],
+      "sourceTypeIncludes": ["conversation_context", "audio_transcript"],
+      "generationModeIn": ["profile-person-memory-check"],
+      "replyIncludes": ["leandro", "bianca", "cotidiano"],
+      "replyExcludes": ["Leandro es mi hijo", "Tiene 18", "fact-check", "no tengo suficiente"]
+    }
+  },
+  {
     "id": "agustina-alias-agus-resolves-to-daughter",
     "query": "contame algo de agus",
     "expect": {
@@ -107,6 +213,16 @@
       "generationModeIn": ["profile-person-check"],
       "replyIncludes": ["bianca", "mi hija", "10"],
       "replyExcludes": ["bian es mi hija", "no tengo suficiente"]
+    }
+  },
+  {
+    "id": "bianca-transcription-alias-avianca-resolves-to-daughter",
+    "query": "quien es avianca?",
+    "expect": {
+      "validationStatusIn": ["ok"],
+      "generationModeIn": ["profile-person-check"],
+      "replyIncludes": ["bianca", "mi hija", "10"],
+      "replyExcludes": ["avianca", "no tengo suficiente"]
     }
   },
   {
@@ -156,7 +272,17 @@
       "validationStatusIn": ["ok"],
       "generationModeIn": ["profile-relation-check"],
       "replyIncludes": ["tilin", "toto"],
-      "replyExcludes": ["como", "llaman", "no puedo confirmarlo"]
+      "replyExcludes": ["boran", "piki", "como", "llaman", "no puedo confirmarlo"]
+    }
+  },
+  {
+    "id": "pets-tenes-mascotas-uses-profile-entity",
+    "query": "tenes mascotas?",
+    "expect": {
+      "validationStatusIn": ["ok"],
+      "generationModeIn": ["profile-relation-check"],
+      "replyIncludes": ["tilin", "toto"],
+      "replyExcludes": ["no tengo suficiente", "como", "llaman"]
     }
   },
   {
@@ -167,6 +293,38 @@
       "generationModeIn": ["profile-relation-check"],
       "replyIncludes": ["berta", "mi abuela"],
       "replyExcludes": ["todavia no me acuerdo", "mi abuela berta", "recordar algo"]
+    }
+  },
+  {
+    "id": "user-visited-grandmother-keeps-speaker",
+    "query": "Hola Fabi, hoy visite a la abuela",
+    "expect": {
+      "validationStatusIn": ["ok"],
+      "generationModeIn": ["family-mention-check"],
+      "replyIncludes": ["hayas visitado", "Berta", "mi abuela"],
+      "replyExcludes": ["yo fui", "yo visite", "fui a visitar", "me la encontre", "cansada", "sonriente"]
+    }
+  },
+  {
+    "id": "dialogue-update-does-not-drift-to-previous-family-topic",
+    "query": "Te cuento que mañana voy a ir al medico",
+    "history": [
+      {
+        "role": "user",
+        "content": "Hola Fabi, hoy visite a tu hijo leandro"
+      },
+      {
+        "role": "assistant",
+        "content": "Si, die, Leandro es mi hijo."
+      }
+    ],
+    "expect": {
+      "validationStatusIn": ["ok"],
+      "intentKindIn": ["dialogue"],
+      "retrievalModeIn": ["dialogue"],
+      "generationModeIn": ["dialogue"],
+      "replyIncludes": ["medico", "contame"],
+      "replyExcludes": ["leandro", "mi hijo", "pensando en leandro", "es muy bueno"]
     }
   },
   {
@@ -218,6 +376,32 @@
       "generationModeIn": ["chronological"],
       "replyIncludes": ["die"],
       "replyExcludes": ["en orden cronologico", "fuentes recuperadas", "mensaje de fabiana del", "whatsapp_text"]
+    }
+  },
+  {
+    "id": "manual-memory-mode-prioritizes-episodes",
+    "query": "contame algo de leandro",
+    "responseMode": "memory",
+    "expect": {
+      "validationStatusIn": ["ok"],
+      "intentKindIn": ["person_memory"],
+      "generationModeIn": ["profile-person-memory-check"],
+      "sourceTypeIncludes": ["conversation_context"],
+      "replyIncludes": ["leandro"],
+      "replyExcludes": ["Leandro es mi hijo", "Tiene 18", "no tengo suficiente"]
+    }
+  },
+  {
+    "id": "manual-sources-mode-summarizes-sources",
+    "query": "leandro y bianca",
+    "responseMode": "sources",
+    "expect": {
+      "validationStatusIn": ["ok"],
+      "intentKindIn": ["source_explorer"],
+      "generationModeIn": ["source-explorer"],
+      "sourceTypeIncludes": ["conversation_context"],
+      "replyIncludes": ["fuentes"],
+      "replyExcludes": ["como si", "Leandro es mi hijo"]
     }
   }
 ]

@@ -6,6 +6,7 @@ import {
   buildMemoryChunks,
   buildMemories,
   buildTranscriptionJobs,
+  buildVideoCandidates,
   normalizeRecords,
   parseWhatsAppText,
   reconcileMediaReferences,
@@ -20,6 +21,7 @@ if (
     "media-check",
     "ingest",
     "audio-inventory",
+    "video-inventory",
     "transcription-batch",
     "memory-build",
     "memory-chunk"
@@ -33,6 +35,7 @@ if (
       "  node packages/whatsapp-parser/src/cli.js media-check <chat.txt> <zip-inventory.json>",
       "  node packages/whatsapp-parser/src/cli.js ingest <chat.txt> <zip-inventory.json> <output-dir> --target <nombre> [--self-label <nombre>]",
       "  node packages/whatsapp-parser/src/cli.js audio-inventory <messages.jsonl> <output-dir>",
+      "  node packages/whatsapp-parser/src/cli.js video-inventory <messages.jsonl> <output-dir>",
       "  node packages/whatsapp-parser/src/cli.js transcription-batch <audio-candidates.jsonl> <extraction-manifest.json> <output-dir>",
       "  node packages/whatsapp-parser/src/cli.js memory-build <messages.jsonl> <transcripts-dir> <output-dir>",
       "  node packages/whatsapp-parser/src/cli.js memory-chunk <memories.jsonl> <output-dir> [--max-chars 900] [--overlap-chars 120]"
@@ -140,6 +143,42 @@ if (command === "audio-inventory") {
   await writeFile(join(secondPath, "audio-candidates.jsonl"), `${candidatesJsonl}\n`, "utf8");
   await writeFile(
     join(secondPath, "audio-manifest.json"),
+    `${JSON.stringify(inventory.manifest, null, 2)}\n`,
+    "utf8"
+  );
+
+  console.log(
+    JSON.stringify(
+      {
+        outputDir: secondPath,
+        candidateCount: inventory.manifest.candidateCount,
+        byRole: inventory.manifest.byRole,
+        byExtension: inventory.manifest.byExtension,
+        byStatus: inventory.manifest.byStatus,
+        totalBytes: inventory.manifest.totalBytes
+      },
+      null,
+      2
+    )
+  );
+}
+
+if (command === "video-inventory") {
+  if (!secondPath) {
+    console.error("Falta <output-dir>.");
+    process.exit(1);
+  }
+
+  const messages = readJsonLines(text);
+  const inventory = buildVideoCandidates(messages);
+  const candidatesJsonl = inventory.candidates
+    .map((candidate) => JSON.stringify(candidate))
+    .join("\n");
+
+  await mkdir(secondPath, { recursive: true });
+  await writeFile(join(secondPath, "video-candidates.jsonl"), `${candidatesJsonl}\n`, "utf8");
+  await writeFile(
+    join(secondPath, "video-manifest.json"),
     `${JSON.stringify(inventory.manifest, null, 2)}\n`,
     "utf8"
   );

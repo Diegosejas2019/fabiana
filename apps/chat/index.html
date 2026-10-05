@@ -16,6 +16,24 @@
           </div>
           <div class="controls">
             <label>
+              Modo
+              <select id="modeSelect">
+                <option value="auto">Auto</option>
+                <option value="memory">Recuerdo</option>
+                <option value="dialogue">Dialogo</option>
+                <option value="sources">Fuentes</option>
+              </select>
+            </label>
+            <label>
+              Motor
+              <select id="providerSelect">
+                <option value="auto">Local auto</option>
+                <option value="ollama">Ollama</option>
+                <option value="anthropic">Claude API</option>
+                <option value="none">Sin LLM</option>
+              </select>
+            </label>
+            <label>
               Rol
               <select id="roleSelect">
                 <option value="targetPerson">Fabiana</option>
@@ -27,6 +45,7 @@
               Fuente
               <select id="sourceSelect">
                 <option value="">Todas</option>
+                <option value="conversation_context">Contexto</option>
                 <option value="whatsapp_text">WhatsApp texto</option>
                 <option value="audio_transcript">WhatsApp audio</option>
                 <option value="facebook_text">Facebook</option>
@@ -39,13 +58,13 @@
         <div id="messages" class="messages" aria-live="polite">
           <article class="bubble assistant">
             <div class="bubble-meta">Sistema</div>
-            <p>Pregunta algo y voy a buscar mensajes reales, audios y datos personales confirmados.</p>
+            <p>Pregunta o contame algo. Puedo buscar recuerdos reales o responder en modo dialogo cuando no haga falta usar fuentes.</p>
           </article>
         </div>
 
         <form id="askForm" class="composer">
-          <textarea id="queryInput" rows="2" placeholder="Escribi una pregunta" required></textarea>
-          <button id="askButton" type="submit">Buscar</button>
+          <textarea id="queryInput" rows="2" placeholder="Escribi una pregunta o mensaje" required></textarea>
+          <button id="askButton" type="submit">Enviar</button>
         </form>
       </section>
 
@@ -55,6 +74,29 @@
           <p id="sourceSummary">Sin consulta</p>
         </header>
         <div id="sources" class="sources"></div>
+        <section class="profile-panel" aria-label="Perfil profundo">
+          <header>
+            <div>
+              <h2>Perfil profundo</h2>
+              <p id="profileSummary">Sin cargar</p>
+            </div>
+            <button id="refreshProfileButton" type="button">Cargar</button>
+          </header>
+          <div id="profileContent" class="profile-content"></div>
+        </section>
+        <section class="learning-panel" aria-label="Aprendizaje y calidad">
+          <header>
+            <div>
+              <h2>Aprendizaje</h2>
+              <p id="learningSummary">Sin cargar</p>
+            </div>
+            <div class="learning-actions-head">
+              <button id="refreshLearningButton" type="button">Cargar</button>
+              <button id="exportLearningButton" type="button">Exportar</button>
+            </div>
+          </header>
+          <div id="learningContent" class="learning-content"></div>
+        </section>
         <section class="entity-review" aria-label="Revision de entidades familiares">
           <header>
             <div>
@@ -64,6 +106,19 @@
             <button id="refreshEntitiesButton" type="button">Analizar</button>
           </header>
           <div id="entityCandidates" class="entity-candidates"></div>
+        </section>
+        <section class="video-library" aria-label="Videos del respaldo">
+          <header>
+            <div>
+              <h2>Videos</h2>
+              <p id="videoSummary">Sin cargar</p>
+            </div>
+            <div class="video-actions-head">
+              <button id="refreshVideosButton" type="button">Cargar</button>
+              <button id="extractVideosButton" type="button">Extraer</button>
+            </div>
+          </header>
+          <div id="videoItems" class="video-items"></div>
         </section>
       </aside>
     </main>

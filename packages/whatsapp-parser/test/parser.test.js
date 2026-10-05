@@ -5,6 +5,7 @@ import {
   buildMemoryChunks,
   buildMemories,
   buildTranscriptionJobs,
+  buildVideoCandidates,
   detectMediaReference,
   normalizeRecords,
   parseLineStart,
@@ -180,6 +181,40 @@ test("builds audio candidates without message text", () => {
   assert.equal(inventory.manifest.candidateCount, 1);
   assert.equal(inventory.manifest.byRole.targetPerson, 1);
   assert.equal(inventory.manifest.byExtension.opus, 1);
+});
+
+test("builds video candidates without message text", () => {
+  const messages = [
+    {
+      id: "msg_000001",
+      timestamp: "2024-01-01T00:00:00.000Z",
+      localDate: "1/1/2024",
+      localTime: "00:00",
+      role: "targetPerson",
+      participantId: "participant_target",
+      text: "VID-1.mp4 (archivo adjunto)",
+      media: {
+        filename: "VID-1.mp4",
+        extension: "mp4",
+        status: "matched",
+        zipEntryName: "VID-1.mp4",
+        bytes: 456
+      },
+      source: {
+        lineStart: 11,
+        lineEnd: 11
+      }
+    }
+  ];
+
+  const inventory = buildVideoCandidates(messages);
+
+  assert.equal(inventory.candidates.length, 1);
+  assert.equal(inventory.candidates[0].id, "video_msg_000001");
+  assert.equal(inventory.candidates[0].filename, "VID-1.mp4");
+  assert.equal("text" in inventory.candidates[0], false);
+  assert.equal(inventory.manifest.candidateCount, 1);
+  assert.equal(inventory.manifest.byExtension.mp4, 1);
 });
 
 test("builds pending transcription jobs from extracted audio", () => {

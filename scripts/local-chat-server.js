@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { createServer } from "node:http";
-import { appendFile, mkdir, readFile } from "node:fs/promises";
-import { createReadStream, existsSync } from "node:fs";
-import { dirname, extname, join, normalize, resolve } from "node:path";
+import { appendFile, mkdir, readFile, readdir, unlink } from "node:fs/promises";
+import { createReadStream, existsSync, statSync } from "node:fs";
+import { dirname, extname, isAbsolute, normalize, relative, resolve } from "node:path";
 import { spawn } from "node:child_process";
 
 const root = process.cwd();
@@ -14,8 +14,10 @@ const buildAssertionMemoriesScript = resolve(root, "scripts/build-user-assertion
 const mergeMemoriesScript = resolve(root, "scripts/merge-memories.js");
 const memoryCliScript = resolve(root, "packages/whatsapp-parser/src/cli.js");
 const embedScript = resolve(root, "scripts/embed-memory-chunks.py");
+const buildConversationMemoryV2Script = resolve(root, "scripts/build-conversation-memory-v2.js");
 const buildStyleProfileScript = resolve(root, "scripts/build-style-profile.js");
 const buildDeepProfileScript = resolve(root, "scripts/build-deep-profile.js");
+const buildDimensionalProfileScript = resolve(root, "scripts/build-dimensional-profile.js");
 const extractFamilyEntitiesScript = resolve(root, "scripts/extract-family-entity-candidates.js");
 const whatsappMemoriesPath = resolve(root, "data/processed/memory/memories.jsonl");
 const facebookMemoriesPath = resolve(root, "data/processed/facebook/memories.jsonl");
@@ -26,23 +28,50 @@ const combinedMemoryDir = resolve(root, "data/processed/combined-memory");
 const combinedMemoriesPath = resolve(combinedMemoryDir, "memories.jsonl");
 const combinedChunksPath = resolve(root, "data/processed/combined-memory/chunks.jsonl");
 const combinedIndexDir = resolve(root, "data/processed/combined-rag");
+const combinedMemoryV2Dir = resolve(root, "data/processed/combined-memory-v2");
+const combinedMemoriesV2Path = resolve(combinedMemoryV2Dir, "memories.jsonl");
+const combinedChunksV2Path = resolve(root, "data/processed/combined-memory-v2/chunks.jsonl");
+const combinedIndexV2Dir = resolve(root, "data/processed/combined-rag-v2");
 const defaultChunksPath = resolve(root, "data/processed/memory/chunks.jsonl");
 const defaultIndexDir = resolve(root, "data/processed/rag");
 const styleProfilePath = resolve(root, "data/processed/persona/persona-style.json");
 const deepProfilePath = resolve(root, "data/processed/persona/deep-profile.json");
+const dimensionalProfilePath = resolve(root, "data/processed/persona/dimensional-profile.json");
 const approvedResponsesPath = resolve(root, "data/processed/feedback/approved-responses.jsonl");
 const responseFeedbackPath = resolve(root, "data/processed/feedback/response-feedback.jsonl");
+const evalCasesPath = resolve(root, "quality/eval-cases.json");
+const evaluationsDir = resolve(root, "data/processed/evaluations");
+const transcriptionJobsPath = resolve(root, "data/processed/transcription/transcription-jobs.jsonl");
+const extractedAudioDir = resolve(root, "data/processed/audio/extracted-target");
+const videoCandidatesPath = resolve(root, "data/processed/video/video-candidates.jsonl");
+const extractedVideoDir = resolve(root, "data/processed/video/extracted-target");
+const videoExtractionManifestPath = resolve(extractedVideoDir, "extraction-manifest.json");
+const videoDeletionsPath = resolve(root, "data/processed/video/deleted-videos.jsonl");
+const extractVideoScript = resolve(root, "scripts/extract-video-candidates.ps1");
 const entityReviewDir = resolve(root, "data/processed/entity-review");
 const familyCandidatesPath = resolve(entityReviewDir, "family-candidates.json");
 const familyReviewsPath = resolve(entityReviewDir, "family-reviews.jsonl");
 const port = Number(process.env.PORT ?? 4173);
 let assertionQueue = Promise.resolve();
+let audioCandidateIndex = null;
+let videoCandidateIndex = null;
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8"
+  ".json": "application/json; charset=utf-8",
+  ".opus": "audio/ogg",
+  ".ogg": "audio/ogg",
+  ".mp3": "audio/mpeg",
+  ".m4a": "audio/mp4",
+  ".aac": "audio/aac",
+  ".wav": "audio/wav",
+  ".mp4": "video/mp4",
+  ".m4v": "video/mp4",
+  ".mov": "video/quicktime",
+  ".3gp": "video/3gpp",
+  ".webm": "video/webm"
 };
 
 const server = createServer(async (request, response) => {
@@ -74,6 +103,21 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === "GET" && url.pathname === "/api/profile") {
+      await handleProfile(request, response);
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/learning") {
+      await handleLearningSummary(request, response);
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/learning/export") {
+      await handleLearningExport(request, response);
+      return;
+    }
+
     if (request.method === "POST" && url.pathname === "/api/entities/family/rebuild") {
       await handleFamilyEntityRebuild(request, response);
       return;
@@ -81,6 +125,31 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "POST" && url.pathname === "/api/entities/family/review") {
       await handleFamilyEntityReview(request, response);
+      return;
+    }
+
+    if ((request.method === "GET" || request.method === "HEAD") && url.pathname.startsWith("/api/audio/")) {
+      await handleAudio(request, response, url, request.method === "HEAD");
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/videos") {
+      await handleVideos(request, response);
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/videos/extract") {
+      await handleVideoExtraction(request, response);
+      return;
+    }
+
+    if ((request.method === "GET" || request.method === "HEAD") && url.pathname.startsWith("/api/video/")) {
+      await handleVideo(request, response, url, request.method === "HEAD");
+      return;
+    }
+
+    if (request.method === "DELETE" && url.pathname.startsWith("/api/video/")) {
+      await handleVideoDelete(request, response, url);
       return;
     }
 
@@ -149,6 +218,14 @@ async function handleAnswer(request, response) {
 
   if (payload.sourceType) {
     args.push("--source-type", String(payload.sourceType));
+  }
+
+  if (payload.responseMode) {
+    args.push("--response-mode", String(payload.responseMode));
+  }
+
+  if (payload.llmProvider) {
+    args.push("--llm-provider", String(payload.llmProvider));
   }
 
   if (Array.isArray(payload.history) && payload.history.length > 0) {
@@ -252,6 +329,206 @@ async function handleFamilyEntities(_request, response) {
   response.end(JSON.stringify(review, null, 2));
 }
 
+async function handleProfile(_request, response) {
+  if (!existsSync(deepProfilePath)) {
+    response.writeHead(404).end("Deep profile not found");
+    return;
+  }
+
+  const profile = await readJsonFile(deepProfilePath);
+  const styleProfile = existsSync(styleProfilePath) ? await readJsonFile(styleProfilePath) : null;
+  const dimensionalProfile = existsSync(dimensionalProfilePath) ? await readJsonFile(dimensionalProfilePath) : null;
+  const feedbackRows = existsSync(responseFeedbackPath)
+    ? readJsonLines(await readFile(responseFeedbackPath, "utf8"))
+    : [];
+  const payload = buildPublicProfileSummary(profile, styleProfile, dimensionalProfile, feedbackRows);
+  response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+  response.end(JSON.stringify(payload, null, 2));
+}
+
+function buildPublicProfileSummary(profile, styleProfile, dimensionalProfile, feedbackRows) {
+  const relationships = profile.relationshipMap?.relationships ?? [];
+  const ownRelations = relationships.filter((row) => normalizeText(row.subject) === "fabiana");
+  const grouped = {};
+  for (const row of ownRelations) {
+    const relation = String(row.relation ?? "relacion");
+    grouped[relation] ??= [];
+    grouped[relation].push({
+      name: row.object,
+      confidence: row.confidence,
+      sourceType: row.sourceType,
+    });
+  }
+
+  const highlights = (profile.biography?.highlights ?? [])
+    .slice(0, 12)
+    .map((row) => ({
+      text: shortenText(row.text, 220),
+      sourceType: row.sourceType,
+      confidence: row.confidence,
+    }));
+
+  return {
+    schemaVersion: 1,
+    generatedAt: profile.generatedAt ?? null,
+    dateRange: profile.dateRange ?? null,
+    sourceCounts: profile.sourceCounts ?? null,
+    voice: {
+      cues: profile.voicebook?.cues ?? [],
+      frequentWords: (profile.voicebook?.frequentWords ?? []).slice(0, 12),
+      frequentPhrases: (profile.voicebook?.frequentPhrases ?? []).slice(0, 10),
+      averageWords: profile.voicebook?.averageWords ?? null,
+    },
+    relationships: grouped,
+    aliases: profile.familyAliases ?? [],
+    dimensions: summarizeDimensionalProfile(dimensionalProfile),
+    highlights,
+    feedback: {
+      total: feedbackRows.length,
+      approved: feedbackRows.filter((row) => row.rating === "approved").length,
+      corrected: feedbackRows.filter((row) => row.rating === "corrected").length,
+      rejected: feedbackRows.filter((row) => row.rating === "rejected").length,
+    },
+    policy: profile.usagePolicy ?? null,
+  };
+}
+
+function summarizeDimensionalProfile(profile) {
+  if (!profile) {
+    return null;
+  }
+  return {
+    schemaVersion: profile.schemaVersion,
+    generatedAt: profile.generatedAt,
+    classifiedCount: profile.source?.classifiedCount ?? 0,
+    dimensions: (profile.dimensions ?? []).map((dimension) => ({
+      id: dimension.id,
+      label: dimension.label,
+      description: dimension.description,
+      evidenceCount: dimension.evidenceCount,
+      dateRange: dimension.dateRange,
+      topEntities: (dimension.topEntities ?? []).slice(0, 8),
+      signals: (dimension.signals ?? []).slice(0, 8),
+      evidence: (dimension.evidence ?? []).slice(0, 3).map((item) => ({
+        memoryId: item.memoryId,
+        sourceType: item.sourceType,
+        localDate: item.localDate,
+        confidence: item.confidence,
+        text: shortenText(item.text, 160),
+      })),
+    })),
+  };
+}
+
+async function handleLearningSummary(_request, response) {
+  const payload = await buildLearningSummary();
+  response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+  response.end(JSON.stringify(payload, null, 2));
+}
+
+async function handleLearningExport(_request, response) {
+  const payload = await buildLearningSummary({ includePrivateExamples: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  response.writeHead(200, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Disposition": `attachment; filename="memoria-ai-aprendizaje-${stamp}.json"`
+  });
+  response.end(JSON.stringify(payload, null, 2));
+}
+
+async function buildLearningSummary(options = {}) {
+  const includePrivateExamples = Boolean(options.includePrivateExamples);
+  const feedbackRows = existsSync(responseFeedbackPath)
+    ? readJsonLines(await readFile(responseFeedbackPath, "utf8"))
+    : [];
+  const approvedRows = existsSync(approvedResponsesPath)
+    ? readJsonLines(await readFile(approvedResponsesPath, "utf8"))
+    : [];
+  const evalCases = existsSync(evalCasesPath) ? await readJsonFile(evalCasesPath) : [];
+  const evaluationFiles = existsSync(evaluationsDir) ? await readdir(evaluationsDir) : [];
+  const latestEvaluation = await findLatestFile(evaluationsDir, evaluationFiles);
+
+  const byRating = countBy(feedbackRows, "rating");
+  const byReason = countBy(feedbackRows.filter((row) => row.reason), "reason");
+  const recentFeedback = feedbackRows.slice(-12).reverse().map((row) => ({
+    id: row.id,
+    reviewedAt: row.reviewedAt,
+    rating: row.rating,
+    reason: row.reason,
+    generationMode: row.generationMode,
+    confidence: row.confidence,
+    query: shortenText(row.query, 160),
+    reply: includePrivateExamples ? row.reply : shortenText(row.reply, 180),
+    correctedReply: includePrivateExamples ? row.correctedReply : shortenText(row.correctedReply, 180),
+    sourceCount: row.sourceCount,
+  }));
+
+  return {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    provider: {
+      defaultProvider: process.env.ANSWER_LLM_PROVIDER ?? "auto",
+      ollamaModel: process.env.OLLAMA_MODEL ?? "llama3.2",
+      anthropicConfigured: Boolean(process.env.ANTHROPIC_API_KEY),
+      anthropicModel: process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-20250514",
+      privacy: "El proveedor anthropic solo se usa si se elige explicitamente y hay ANTHROPIC_API_KEY.",
+    },
+    feedback: {
+      total: feedbackRows.length,
+      approved: byRating.approved ?? 0,
+      corrected: byRating.corrected ?? 0,
+      rejected: byRating.rejected ?? 0,
+      approvedExamples: approvedRows.length,
+      byReason,
+      recent: recentFeedback,
+    },
+    evaluation: {
+      caseCount: Array.isArray(evalCases) ? evalCases.length : 0,
+      outputCount: evaluationFiles.filter((name) => name.endsWith(".json")).length,
+      latestRunAt: latestEvaluation?.mtime ?? null,
+      latestFile: latestEvaluation?.name ?? null,
+    },
+    files: {
+      feedback: responseFeedbackPath,
+      approvedResponses: approvedResponsesPath,
+      evaluations: evaluationsDir,
+    },
+  };
+}
+
+async function findLatestFile(directory, names) {
+  let latest = null;
+  for (const name of names.filter((item) => item.endsWith(".json"))) {
+    const filePath = resolve(directory, name);
+    const stat = statSync(filePath);
+    const row = {
+      name,
+      mtime: stat.mtime.toISOString(),
+      size: stat.size,
+    };
+    if (!latest || row.mtime > latest.mtime) {
+      latest = row;
+    }
+  }
+  return latest;
+}
+
+function normalizeText(value) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .trim();
+}
+
+function shortenText(value, limit) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (text.length <= limit) {
+    return text;
+  }
+  return `${text.slice(0, Math.max(0, limit - 1)).trimEnd()}…`;
+}
+
 async function handleFamilyEntityRebuild(_request, response) {
   const result = await rebuildFamilyEntityCandidates();
   const review = await readFamilyEntityReview();
@@ -322,6 +599,364 @@ async function handleFamilyEntityReview(request, response) {
       2
     )
   );
+}
+
+async function handleAudio(request, response, url, headOnly = false) {
+  const candidateId = decodeURIComponent(url.pathname.split("/").pop() ?? "").trim();
+  if (!/^audio_msg_\d+$/.test(candidateId)) {
+    response.writeHead(400).end("Invalid audio id");
+    return;
+  }
+
+  const candidate = await findAudioCandidate(candidateId);
+  const localAudioPath = candidate?.localAudioPath ? normalize(resolve(candidate.localAudioPath)) : null;
+
+  if (!localAudioPath || !isPathInside(localAudioPath, extractedAudioDir) || !existsSync(localAudioPath)) {
+    response.writeHead(404).end("Audio not found");
+    return;
+  }
+
+  const stat = statSync(localAudioPath);
+  const contentType = mimeTypes[extname(localAudioPath).toLowerCase()] ?? "application/octet-stream";
+  const range = parseRangeHeader(request.headers.range, stat.size);
+
+  if (range) {
+    response.writeHead(206, {
+      "Content-Type": contentType,
+      "Accept-Ranges": "bytes",
+      "Content-Length": range.end - range.start + 1,
+      "Content-Range": `bytes ${range.start}-${range.end}/${stat.size}`,
+      "Cache-Control": "private, max-age=3600"
+    });
+    if (headOnly) {
+      response.end();
+      return;
+    }
+    createReadStream(localAudioPath, { start: range.start, end: range.end }).pipe(response);
+    return;
+  }
+
+  response.writeHead(200, {
+    "Content-Type": contentType,
+    "Accept-Ranges": "bytes",
+    "Content-Length": stat.size,
+    "Cache-Control": "private, max-age=3600"
+  });
+  if (headOnly) {
+    response.end();
+    return;
+  }
+  createReadStream(localAudioPath).pipe(response);
+}
+
+async function findAudioCandidate(candidateId) {
+  if (!audioCandidateIndex) {
+    audioCandidateIndex = new Map();
+    if (existsSync(transcriptionJobsPath)) {
+      const rows = readJsonLines(await readFile(transcriptionJobsPath, "utf8"));
+      for (const row of rows) {
+        if (row.audioCandidateId && row.localAudioPath) {
+          audioCandidateIndex.set(row.audioCandidateId, row);
+        }
+      }
+    }
+  }
+
+  return audioCandidateIndex.get(candidateId) ?? null;
+}
+
+async function handleVideos(_request, response) {
+  await ensureVideoInventory();
+  const library = await readVideoLibrary();
+  response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+  response.end(JSON.stringify(publicVideoLibrary(library), null, 2));
+}
+
+async function handleVideoExtraction(_request, response) {
+  await ensureVideoInventory();
+  const zipPath = await resolveWhatsAppZipPath();
+  if (!zipPath || !existsSync(zipPath)) {
+    response.writeHead(404).end("WhatsApp zip not found");
+    return;
+  }
+
+  await mkdir(extractedVideoDir, { recursive: true });
+  await runProcess("powershell", [
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    extractVideoScript,
+    "-ZipPath",
+    zipPath,
+    "-CandidatesPath",
+    videoCandidatesPath,
+    "-OutputDir",
+    "data/processed/video/extracted-target"
+  ]);
+  await purgeDeletedVideoFiles();
+  videoCandidateIndex = null;
+
+  const library = await readVideoLibrary();
+  response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+  response.end(JSON.stringify(publicVideoLibrary(library), null, 2));
+}
+
+async function handleVideo(request, response, url, headOnly = false) {
+  const candidateId = decodeURIComponent(url.pathname.split("/").pop() ?? "").trim();
+  if (!/^video_msg_\d+$/.test(candidateId)) {
+    response.writeHead(400).end("Invalid video id");
+    return;
+  }
+
+  const candidate = await findVideoCandidate(candidateId);
+  if (!candidate || candidate.deleted) {
+    response.writeHead(404).end("Video not found");
+    return;
+  }
+
+  const localVideoPath = candidate.localVideoPath ? normalize(resolve(candidate.localVideoPath)) : null;
+
+  if (!localVideoPath || !isPathInside(localVideoPath, extractedVideoDir) || !existsSync(localVideoPath)) {
+    response.writeHead(404).end("Video not extracted");
+    return;
+  }
+
+  await streamMediaFile(request, response, localVideoPath, headOnly);
+}
+
+async function handleVideoDelete(_request, response, url) {
+  const candidateId = decodeURIComponent(url.pathname.split("/").pop() ?? "").trim();
+  if (!/^video_msg_\d+$/.test(candidateId)) {
+    response.writeHead(400).end("Invalid video id");
+    return;
+  }
+
+  const candidate = await findVideoCandidate(candidateId);
+  if (!candidate) {
+    response.writeHead(404).end("Video not found");
+    return;
+  }
+
+  const localVideoPath = candidate.localVideoPath ? normalize(resolve(candidate.localVideoPath)) : null;
+  if (localVideoPath && isPathInside(localVideoPath, extractedVideoDir) && existsSync(localVideoPath)) {
+    await unlink(localVideoPath);
+  }
+
+  const row = {
+    candidateId,
+    messageId: candidate.messageId,
+    filename: candidate.filename,
+    deletedAt: new Date().toISOString(),
+    action: "delete_local_copy"
+  };
+  await mkdir(dirname(videoDeletionsPath), { recursive: true });
+  await appendFile(videoDeletionsPath, `${JSON.stringify(row)}\n`, "utf8");
+  videoCandidateIndex = null;
+
+  response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+  response.end(JSON.stringify({ ok: true, deleted: row }, null, 2));
+}
+
+async function ensureVideoInventory() {
+  if (existsSync(videoCandidatesPath)) {
+    return;
+  }
+
+  const messagesPath = resolve(root, "data/processed/ingest/messages.jsonl");
+  if (!existsSync(messagesPath)) {
+    throw new Error("No encuentro data/processed/ingest/messages.jsonl para armar videos.");
+  }
+
+  await runNode([
+    memoryCliScript,
+    "video-inventory",
+    messagesPath,
+    resolve(root, "data/processed/video")
+  ]);
+}
+
+async function readVideoLibrary() {
+  const candidates = existsSync(videoCandidatesPath)
+    ? readJsonLines(await readFile(videoCandidatesPath, "utf8"))
+    : [];
+  const extractedByCandidateId = await readVideoExtractionIndex();
+  const deletedIds = await readDeletedVideoIds();
+  const videos = candidates
+    .map((candidate) => {
+      const extracted = extractedByCandidateId.get(candidate.id);
+      const localVideoPath = extracted?.localPath ?? null;
+      const isExtracted =
+        Boolean(localVideoPath) &&
+        ["extracted", "skipped_existing"].includes(extracted?.status) &&
+        existsSync(localVideoPath);
+      return {
+        id: candidate.id,
+        messageId: candidate.messageId,
+        timestamp: candidate.timestamp,
+        localDate: candidate.localDate,
+        localTime: candidate.localTime,
+        role: candidate.role,
+        filename: candidate.filename,
+        extension: candidate.extension,
+        bytes: extracted?.bytes ?? candidate.bytes ?? null,
+        sizeLabel: formatBytes(extracted?.bytes ?? candidate.bytes ?? 0),
+        mediaStatus: candidate.mediaStatus,
+        localVideoPath,
+        extracted: isExtracted,
+        deleted: deletedIds.has(candidate.id),
+        url: isExtracted && !deletedIds.has(candidate.id) ? `/api/video/${encodeURIComponent(candidate.id)}` : null,
+        source: candidate.source
+      };
+    })
+    .filter((video) => !video.deleted);
+
+  const activeVideos = videos.filter((video) => !video.deleted);
+  return {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    summary: {
+      total: candidates.length,
+      visible: activeVideos.length,
+      extracted: activeVideos.filter((video) => video.extracted).length,
+      totalBytes: activeVideos.reduce((sum, video) => sum + (video.bytes ?? 0), 0),
+      byRole: countBy(activeVideos, "role")
+    },
+    videos: activeVideos
+  };
+}
+
+async function readVideoExtractionIndex() {
+  const rows = new Map();
+  if (!existsSync(videoExtractionManifestPath)) {
+    return rows;
+  }
+
+  const manifest = await readJsonFile(videoExtractionManifestPath);
+  for (const file of manifest.files ?? []) {
+    if (file.candidateId) {
+      rows.set(file.candidateId, file);
+    }
+  }
+  return rows;
+}
+
+async function readDeletedVideoIds() {
+  if (!existsSync(videoDeletionsPath)) {
+    return new Set();
+  }
+  return new Set(readJsonLines(await readFile(videoDeletionsPath, "utf8")).map((row) => row.candidateId));
+}
+
+async function purgeDeletedVideoFiles() {
+  const deletedIds = await readDeletedVideoIds();
+  if (deletedIds.size === 0) {
+    return;
+  }
+
+  const extractedByCandidateId = await readVideoExtractionIndex();
+  for (const candidateId of deletedIds) {
+    const extracted = extractedByCandidateId.get(candidateId);
+    const localVideoPath = extracted?.localPath ? normalize(resolve(extracted.localPath)) : null;
+    if (localVideoPath && isPathInside(localVideoPath, extractedVideoDir) && existsSync(localVideoPath)) {
+      await unlink(localVideoPath);
+    }
+  }
+}
+
+async function findVideoCandidate(candidateId) {
+  if (!videoCandidateIndex) {
+    await ensureVideoInventory();
+    const library = await readVideoLibrary();
+    videoCandidateIndex = new Map(library.videos.map((video) => [video.id, video]));
+  }
+
+  return videoCandidateIndex.get(candidateId) ?? null;
+}
+
+function publicVideoLibrary(library) {
+  return {
+    ...library,
+    videos: (library.videos ?? []).map(({ localVideoPath, ...video }) => video)
+  };
+}
+
+async function resolveWhatsAppZipPath() {
+  const inventoryPath = resolve(root, "data/processed/zip-inventory.json");
+  if (!existsSync(inventoryPath)) {
+    return null;
+  }
+  const inventory = await readJsonFile(inventoryPath);
+  return inventory.zipPath ? normalize(resolve(inventory.zipPath)) : null;
+}
+
+async function streamMediaFile(request, response, filePath, headOnly = false) {
+  const stat = statSync(filePath);
+  const contentType = mimeTypes[extname(filePath).toLowerCase()] ?? "application/octet-stream";
+  const range = parseRangeHeader(request.headers.range, stat.size);
+
+  if (range) {
+    response.writeHead(206, {
+      "Content-Type": contentType,
+      "Accept-Ranges": "bytes",
+      "Content-Length": range.end - range.start + 1,
+      "Content-Range": `bytes ${range.start}-${range.end}/${stat.size}`,
+      "Cache-Control": "private, max-age=3600"
+    });
+    if (headOnly) {
+      response.end();
+      return;
+    }
+    createReadStream(filePath, { start: range.start, end: range.end }).pipe(response);
+    return;
+  }
+
+  response.writeHead(200, {
+    "Content-Type": contentType,
+    "Accept-Ranges": "bytes",
+    "Content-Length": stat.size,
+    "Cache-Control": "private, max-age=3600"
+  });
+  if (headOnly) {
+    response.end();
+    return;
+  }
+  createReadStream(filePath).pipe(response);
+}
+
+function parseRangeHeader(rangeHeader, size) {
+  if (!rangeHeader) {
+    return null;
+  }
+
+  const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader);
+  if (!match) {
+    return null;
+  }
+
+  const startText = match[1];
+  const endText = match[2];
+  let start = startText ? Number(startText) : 0;
+  let end = endText ? Number(endText) : size - 1;
+
+  if (!startText && endText) {
+    const suffixLength = Number(endText);
+    start = Math.max(size - suffixLength, 0);
+    end = size - 1;
+  }
+
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start || start >= size) {
+    return null;
+  }
+
+  return {
+    start,
+    end: Math.min(end, size - 1)
+  };
+}
+
+function isPathInside(childPath, parentPath) {
+  const relation = relative(parentPath, childPath);
+  return relation.length > 0 && !relation.startsWith("..") && !isAbsolute(relation);
 }
 
 async function readFamilyEntityReview() {
@@ -399,6 +1034,7 @@ function buildApprovedResponseRow(payload, query, reply) {
     confidence: payload.confidence ?? null,
     retrievalMode: payload.retrievalMode ?? null,
     generationMode: payload.generationMode ?? null,
+    quality: payload.quality ?? null,
     styleProfile: payload.styleProfile ?? null,
     deepProfile: payload.deepProfile ?? null,
     sourceCount: sources.length,
@@ -437,6 +1073,7 @@ function buildResponseFeedbackRow(payload, query, reply, rating) {
     retrievalMode: payload.retrievalMode ?? null,
     generationMode: payload.generationMode ?? null,
     validation: payload.validation ?? null,
+    quality: payload.quality ?? null,
     styleProfile: payload.styleProfile ?? null,
     deepProfile: payload.deepProfile ?? null,
     sourceCount: sources.length,
@@ -556,6 +1193,9 @@ async function rebuildCombinedMemory() {
   await runNode([mergeMemoriesScript, combinedMemoriesPath, ...inputPaths]);
   await runNode([memoryCliScript, "memory-chunk", combinedMemoriesPath, combinedMemoryDir]);
   await runPython([embedScript, "--chunks", combinedChunksPath, "--output-dir", combinedIndexDir]);
+  await runNode([buildConversationMemoryV2Script, combinedMemoriesPath, combinedMemoriesV2Path]);
+  await runNode([memoryCliScript, "memory-chunk", combinedMemoriesV2Path, combinedMemoryV2Dir]);
+  await runPython([embedScript, "--chunks", combinedChunksV2Path, "--output-dir", combinedIndexV2Dir]);
   await runNode([
     buildStyleProfileScript,
     combinedMemoriesPath,
@@ -586,14 +1226,23 @@ async function findAssertionById(id) {
 }
 
 function resolveChunksPath() {
+  if (existsSync(combinedChunksV2Path) && existsSync(resolve(combinedIndexV2Dir, "embeddings.npy"))) {
+    return combinedChunksV2Path;
+  }
   return existsSync(combinedChunksPath) ? combinedChunksPath : defaultChunksPath;
 }
 
 function resolveMemoriesPath() {
+  if (existsSync(combinedMemoriesV2Path)) {
+    return combinedMemoriesV2Path;
+  }
   return existsSync(combinedMemoriesPath) ? combinedMemoriesPath : whatsappMemoriesPath;
 }
 
 function resolveIndexDir() {
+  if (existsSync(resolve(combinedIndexV2Dir, "embeddings.npy"))) {
+    return combinedIndexV2Dir;
+  }
   return existsSync(resolve(combinedIndexDir, "embeddings.npy")) ? combinedIndexDir : defaultIndexDir;
 }
 
@@ -679,4 +1328,29 @@ function readJsonLines(text) {
     .split(/\r?\n/)
     .filter((line) => line.trim().length > 0)
     .map((line) => JSON.parse(line));
+}
+
+async function readJsonFile(path) {
+  const text = await readFile(path, "utf8");
+  return JSON.parse(text.replace(/^\uFEFF/, ""));
+}
+
+function countBy(rows, key) {
+  const counts = {};
+  for (const row of rows) {
+    const value = row[key] ?? "unknown";
+    counts[value] = (counts[value] ?? 0) + 1;
+  }
+  return counts;
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes ?? 0);
+  if (value >= 1024 * 1024) {
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  if (value >= 1024) {
+    return `${(value / 1024).toFixed(1)} KB`;
+  }
+  return `${value} B`;
 }

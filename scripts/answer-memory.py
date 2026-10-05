@@ -34,9 +34,15 @@ def main():
     parser.add_argument("--feedback", default=None, help="Optional reviewed response feedback JSONL")
     parser.add_argument("--history-json", default=None, help="Recent chat turns as JSON")
     parser.add_argument(
+        "--response-mode",
+        default="auto",
+        choices=["auto", "dialogue", "memory", "sources"],
+        help="Force a high-level answer mode instead of automatic intent routing",
+    )
+    parser.add_argument(
         "--llm-provider",
         default=os.environ.get("ANSWER_LLM_PROVIDER", "auto"),
-        choices=["auto", "none", "ollama"],
+        choices=["auto", "none", "ollama", "anthropic"],
         help="Generative engine for persona replies",
     )
     parser.add_argument(
@@ -48,6 +54,21 @@ def main():
         "--ollama-url",
         default=os.environ.get("OLLAMA_URL", "http://localhost:11434/api/chat"),
         help="Ollama chat API URL",
+    )
+    parser.add_argument(
+        "--anthropic-model",
+        default=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
+        help="Anthropic model used when Claude generation is enabled",
+    )
+    parser.add_argument(
+        "--anthropic-url",
+        default=os.environ.get("ANTHROPIC_URL", "https://api.anthropic.com/v1/messages"),
+        help="Anthropic Messages API URL",
+    )
+    parser.add_argument(
+        "--anthropic-key",
+        default=os.environ.get("ANTHROPIC_API_KEY", ""),
+        help="Anthropic API key. Prefer the ANTHROPIC_API_KEY environment variable.",
     )
     args = parser.parse_args()
     style_profile = read_optional_style_profile(args.style_profile)
@@ -63,12 +84,15 @@ def main():
     chunks_by_id = {chunk["id"]: chunk for chunk in read_jsonl(args.chunks)}
 
     effective_query = resolve_contextual_query(args.query, conversation_history, deep_profile)
+    intent = classify_query_intent(args.query, effective_query, conversation_history, deep_profile, args.response_mode)
+    retrieval_query = enrich_query_for_intent(effective_query, intent, deep_profile)
     normalized_query = normalize_for_match(effective_query)
+    normalized_retrieval_query = normalize_for_match(retrieval_query)
     fact_terms = None
 
-    if asks_recent_messages(normalized_query):
+    if intent["kind"] == "recent":
         retrieval_mode = "chronological"
-        include_conversation = asks_recent_conversation(normalized_query)
+        include_conversation = asks_recent_conversation(normalized_query) or intent.get("sourcePolicy") == "episodes"
         sources = build_recent_sources(
             metadata,
             chunks_by_id,
@@ -83,7 +107,7 @@ def main():
         draft = build_recent_draft(confidence, sources, args.show_text)
         reply = build_recent_reply(sources, args.show_text)
         generation_mode = "chronological"
-    elif asks_identity_fact(normalized_query):
+    elif intent["kind"] == "fact":
         retrieval_mode = "fact"
         family_entities = build_family_entity_index(deep_profile)
         fact_terms = extract_fact_terms(normalized_query, family_entities)
@@ -100,28 +124,48 @@ def main():
             draft = build_fact_draft(confidence, sources, fact_terms)
             reply = build_fact_reply(confidence, sources, fact_terms)
             generation_mode = "fact-check"
+    elif intent["kind"] == "dialogue":
+        retrieval_mode = "dialogue"
+        sources = []
+        confidence = "high"
+        family_mention_reply = build_family_mention_reply(normalized_query, deep_profile)
+        if family_mention_reply:
+            reply = family_mention_reply
+            generation_mode = "family-mention-check"
+        else:
+            reply = build_dialogue_reply(normalized_query, args.query)
+            generation_mode = "dialogue"
+        draft = "Use modo dialogo: no fuerzo recuerdos ni fuentes cuando Diego cuenta algo actual."
     else:
         retrieval_mode = "semantic"
         embeddings = np.load(index_dir / "embeddings.npy")
         model = TextEmbedding(model_name=model_name)
-        query_vector = np.array(list(model.query_embed(effective_query))[0], dtype=np.float32)
+        query_vector = np.array(list(model.query_embed(retrieval_query))[0], dtype=np.float32)
         scores = cosine_scores(embeddings, query_vector)
-        sources = build_semantic_sources(metadata, chunks_by_id, scores, args.top_k, args.role, args.source_type, args.show_text, normalized_query)
+        sources = build_semantic_sources(metadata, chunks_by_id, scores, args.top_k, args.role, args.source_type, args.show_text, normalized_retrieval_query, intent)
         confidence = classify_confidence(sources)
-        draft = build_draft(confidence, sources, args.show_text)
-        reply, generation_mode = build_persona_reply(
-            effective_query,
-            confidence,
-            sources,
-            args.persona_name,
-            args.llm_provider,
-            args.ollama_model,
-            args.ollama_url,
-            style_profile,
-            deep_profile,
-            feedback_examples,
-            conversation_history,
-        )
+        draft = build_draft(confidence, sources, args.show_text, intent)
+        if intent["kind"] == "source_explorer":
+            reply = build_source_explorer_reply(sources)
+            generation_mode = "source-explorer"
+        else:
+            reply, generation_mode = build_persona_reply(
+                effective_query,
+                confidence,
+                sources,
+                args.persona_name,
+                args.llm_provider,
+                args.ollama_model,
+                args.ollama_url,
+                args.anthropic_model,
+                args.anthropic_url,
+                args.anthropic_key,
+                style_profile,
+                deep_profile,
+                feedback_examples,
+                conversation_history,
+                intent,
+            )
 
     validation = validate_and_repair_reply(
         normalized_query,
@@ -135,6 +179,15 @@ def main():
     )
     reply = validation["reply"]
     generation_mode = validation["generationMode"]
+    quality = assess_answer_quality(
+        reply,
+        generation_mode,
+        retrieval_mode,
+        confidence,
+        sources,
+        validation,
+        intent,
+    )
 
     answer = {
         "schemaVersion": 2,
@@ -148,6 +201,8 @@ def main():
         "reply": reply,
         "generationMode": generation_mode,
         "validation": validation["summary"],
+        "quality": quality,
+        "intent": intent,
         "styleProfile": summarize_style_profile(style_profile),
         "deepProfile": summarize_deep_profile(deep_profile),
         "feedbackProfile": summarize_feedback_examples(feedback_examples),
@@ -171,6 +226,8 @@ def main():
                 "reply": answer["reply"],
                 "generationMode": answer["generationMode"],
                 "validation": answer["validation"],
+                "quality": answer["quality"],
+                "intent": answer["intent"],
                 "styleProfile": answer["styleProfile"],
                 "deepProfile": answer["deepProfile"],
                 "feedbackProfile": answer["feedbackProfile"],
@@ -201,11 +258,12 @@ def classify_confidence(sources):
     return "none"
 
 
-def build_semantic_sources(metadata, chunks_by_id, scores, top_k, role, source_type, show_text, query):
+def build_semantic_sources(metadata, chunks_by_id, scores, top_k, role, source_type, show_text, query, intent=None):
     candidates = []
     latest_timestamp = latest_parseable_timestamp(metadata)
     query_terms = extract_search_terms(query)
     use_recent_boost = asks_recent_context(query)
+    intent = intent or {"kind": "memory", "sourcePolicy": "balanced"}
 
     for row, score in zip(metadata, scores):
         if role and row["role"] != role:
@@ -216,7 +274,7 @@ def build_semantic_sources(metadata, chunks_by_id, scores, top_k, role, source_t
         chunk = chunks_by_id[row["chunkId"]]
         lexical = lexical_match_score(query_terms, normalize_for_match(chunk.get("text", "")))
         recency = recency_match_score(row, latest_timestamp) if use_recent_boost else 0.0
-        source_boost = source_type_boost(row, lexical, query)
+        source_boost = source_type_boost(row, lexical, query, intent)
         hybrid_score = min(1.0, float(score) + lexical + recency + source_boost)
         source = build_source(row, chunk, hybrid_score, show_text)
         source["ranking"] = {
@@ -228,6 +286,7 @@ def build_semantic_sources(metadata, chunks_by_id, scores, top_k, role, source_t
         }
         candidates.append(source)
 
+    candidates = expand_episode_neighbors(candidates)
     candidates.sort(
         key=lambda item: (
             item["score"],
@@ -236,7 +295,110 @@ def build_semantic_sources(metadata, chunks_by_id, scores, top_k, role, source_t
         ),
         reverse=True,
     )
-    return candidates[:top_k]
+    return select_sources_for_intent(candidates, top_k, intent)
+
+
+def select_sources_for_intent(candidates, top_k, intent):
+    if intent.get("sourcePolicy") not in ["episodes", "memory"]:
+        return distinct_sources(candidates, top_k)
+
+    selected = []
+    seen = set()
+
+    for source in candidates:
+        if source.get("sourceType") != "conversation_context":
+            continue
+        if add_distinct_source(selected, seen, source, top_k):
+            source.setdefault("selectionReason", "episode_context")
+        if len(selected) >= min(3, top_k):
+            break
+
+    for source in candidates:
+        add_distinct_source(selected, seen, source, top_k)
+        if len(selected) >= top_k:
+            break
+
+    return selected
+
+
+def add_distinct_source(selected, seen, source, limit):
+    key = source.get("memoryId") or source.get("chunkId")
+    if key in seen or len(selected) >= limit:
+        return False
+    seen.add(key)
+    selected.append(source)
+    return True
+
+
+def distinct_sources(sources, limit):
+    selected = []
+    seen = set()
+    for source in sources:
+        if add_distinct_source(selected, seen, source, limit):
+            pass
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def expand_episode_neighbors(candidates):
+    by_memory_id = {
+        source.get("memoryId"): source
+        for source in candidates
+        if source.get("memoryId")
+    }
+    expanded = list(candidates)
+
+    for source in candidates:
+        evidence = source.get("evidence") or {}
+        if evidence.get("kind") != "conversation_context":
+            continue
+        source["episode"] = build_episode_summary(source)
+        base_score = float(source.get("score") or 0)
+        for memory_id in evidence.get("memoryIds", [])[:12]:
+            neighbor = by_memory_id.get(memory_id)
+            if not neighbor:
+                continue
+            neighbor = dict(neighbor)
+            neighbor["score"] = max(float(neighbor.get("score") or 0), min(1.0, base_score - 0.015))
+            neighbor["episodeParentId"] = source.get("memoryId")
+            neighbor.setdefault("ranking", {})
+            neighbor["ranking"]["episodeBoost"] = round(max(0.0, neighbor["score"] - float(by_memory_id[memory_id].get("score") or 0)), 6)
+            expanded.append(neighbor)
+
+    return expanded
+
+
+def build_episode_summary(source):
+    evidence = source.get("evidence") or {}
+    date_range = evidence.get("dateRange") or {}
+    time_range = evidence.get("timeRange") or {}
+    text = normalize_for_match(source.get("text") or source.get("displayText") or "")
+    return {
+        "kind": "conversation_episode",
+        "surface": (evidence.get("source") or {}).get("surface"),
+        "messageCount": len(evidence.get("messageIds", [])),
+        "dateRange": date_range,
+        "timeRange": time_range,
+        "themes": detect_episode_themes(text),
+        "roleCounts": evidence.get("roleCounts") or {},
+    }
+
+
+def detect_episode_themes(text):
+    theme_patterns = [
+        ("salud", ["estomago", "digest", "medico", "doc", "turno", "endoscopia", "malestar", "siento mal", "tratamiento"]),
+        ("hijos", ["leandro", "lean", "agustina", "agus", "bianca", "bian", "chicos", "hijos", "escuela", "clases"]),
+        ("casa", ["casa", "limpiar", "orden", "platos", "pieza", "piso", "desastre"]),
+        ("familia", ["abuela", "berta", "prima", "tias", "beti", "daiana", "naty"]),
+        ("mascotas", ["perro", "perrito", "gato", "gatito", "tilin", "toto", "boran", "piki"]),
+        ("rutina", ["manana", "tarde", "horario", "retirar", "buscar", "llevar", "trabajo"]),
+    ]
+    themes = []
+    for label, patterns in theme_patterns:
+        if any(pattern in text for pattern in patterns):
+            themes.append(label)
+    return themes[:4]
 
 
 SEARCH_STOP_WORDS = {
@@ -370,11 +532,43 @@ def recency_match_score(row, latest_timestamp):
     return 0.0
 
 
-def source_type_boost(row, lexical_score, query):
+def source_type_boost(row, lexical_score, query, intent=None):
     source_type = row.get("sourceType")
+    kind = (intent or {}).get("kind")
+    source_policy = (intent or {}).get("sourcePolicy")
+
     if source_type == "user_assertion":
+        if kind in ["memory", "children_memory", "person_memory", "self_profile", "health_context"]:
+            return -0.08 if lexical_score < 0.14 else -0.02
         return 0.08 if lexical_score >= 0.08 else -0.04
-    if source_type == "audio_transcript" and any(term in query for term in ["audio", "voz", "nota de voz"]):
+    if source_type == "conversation_context":
+        if source_policy == "episodes" or kind in ["memory", "children_memory", "person_memory", "self_profile", "health_context"]:
+            return 0.1 if lexical_score >= 0.08 else 0.07
+        if any(term in query for term in [
+            "contexto",
+            "hablamos",
+            "conversacion",
+            "conversamos",
+            "ultimos",
+            "ultimo",
+            "recuerdo",
+            "recuerdos",
+            "cotidiano",
+            "rutina",
+            "escuela",
+            "colegio",
+            "casa",
+            "chicos",
+            "hijos",
+            "pasado",
+            "paso",
+        ]):
+            return 0.06
+        return 0.02 if lexical_score >= 0.08 else 0.0
+    if source_type == "audio_transcript" and (
+        any(term in query for term in ["audio", "voz", "nota de voz"])
+        or kind in ["memory", "children_memory", "person_memory", "health_context"]
+    ):
         return 0.04
     if source_type == "whatsapp_text" and asks_whatsapp_messages(query):
         return 0.04
@@ -388,7 +582,7 @@ def build_recent_sources(metadata, chunks_by_id, top_k, role, source_type, show_
             continue
         if row["sourceType"] == "user_assertion" and source_type != "user_assertion":
             continue
-        if prefer_whatsapp and row["sourceType"] not in ["whatsapp_text", "audio_transcript"]:
+        if prefer_whatsapp and row["sourceType"] not in ["whatsapp_text", "audio_transcript", "conversation_context"]:
             continue
         if role and not include_conversation and row["role"] != role:
             continue
@@ -460,6 +654,10 @@ def build_source(row, chunk, score, show_text):
 
     if show_text:
         source["text"] = chunk["text"]
+        display_text = corrected_display_source_text(chunk["text"])
+        if display_text != chunk["text"]:
+            source["displayText"] = display_text
+            source["textCorrections"] = ["bianca_transcription_alias"]
 
     return source
 
@@ -478,7 +676,7 @@ def classify_fact_confidence(sources, fact_terms):
     return "none"
 
 
-def build_draft(confidence, sources, show_text):
+def build_draft(confidence, sources, show_text, intent=None):
     if confidence == "none":
         return (
             "No encontre recuerdos suficientes para responder basandome en el archivo. "
@@ -487,22 +685,56 @@ def build_draft(confidence, sources, show_text):
 
     source_count = len(sources)
     date_span = summarize_dates(sources)
+    episode_count = sum(1 for source in sources if source.get("sourceType") == "conversation_context")
+    intent_label = (intent or {}).get("label", "recuerdo")
 
     if confidence == "high":
         opening = "Encontre varias fuentes relacionadas en el archivo."
     else:
         opening = "Encontre algunas fuentes relacionadas, pero la evidencia no es concluyente."
 
+    episode_sentence = ""
+    if episode_count:
+        episode_sentence = f" Priorizo {episode_count} episodio(s) conversacionales para sostener contexto."
+
     if show_text:
         return (
-            f"{opening} Hay {source_count} fuentes recuperadas ({date_span}). "
+            f"{opening} Intencion: {intent_label}. Hay {source_count} fuentes recuperadas ({date_span}).{episode_sentence} "
             "Usa los textos y evidencias adjuntas para redactar una respuesta final sin agregar recuerdos nuevos."
         )
 
     return (
-        f"{opening} Hay {source_count} fuentes recuperadas ({date_span}). "
+        f"{opening} Intencion: {intent_label}. Hay {source_count} fuentes recuperadas ({date_span}).{episode_sentence} "
         "No incluyo texto privado en consola; revisa el JSON privado o vuelve a correr con --show-text si quieres inspeccionar contenido."
     )
+
+
+def build_source_explorer_reply(sources):
+    if not sources:
+        return "No encontre fuentes claras para mostrarte sobre eso."
+
+    episode_count = sum(1 for source in sources if source.get("sourceType") == "conversation_context")
+    audio_count = sum(1 for source in sources if source.get("sourceType") == "audio_transcript")
+    date_span = summarize_dates(sources)
+    type_counts = []
+    for source_type, label in [
+        ("conversation_context", "episodios"),
+        ("audio_transcript", "audios"),
+        ("whatsapp_text", "mensajes"),
+        ("facebook_text", "Facebook"),
+        ("user_assertion", "datos confirmados"),
+    ]:
+        count = sum(1 for source in sources if source.get("sourceType") == source_type)
+        if count:
+            type_counts.append(f"{count} {label}")
+
+    lead = "Te dejo las fuentes que encontre"
+    if episode_count:
+        lead = "Te dejo primero los episodios conversacionales que encontre"
+    detail = f": {', '.join(type_counts)}" if type_counts else ""
+    audio_hint = " Hay audios recuperados para escuchar." if audio_count else ""
+    date_sentence = f" Estan {date_span}." if date_span.startswith("entre ") else f" Fecha: {date_span}."
+    return f"{lead}{detail}.{date_sentence}{audio_hint} Revisalas en el panel de fuentes."
 
 
 def build_fact_draft(confidence, sources, fact_terms):
@@ -588,6 +820,12 @@ def collect_reply_issues(query, reply, retrieval_mode, sources, deep_profile):
         issues.append("bad_addressing")
     if has_health_contradiction(query, normalized_reply, sources, deep_profile):
         issues.append("health_contradiction")
+    if has_children_context_confusion(query, normalized_reply):
+        issues.append("children_context_confusion")
+    if has_children_memory_drift(query, normalized_reply):
+        issues.append("children_memory_drift")
+    if has_speaker_inversion(query, normalized_reply):
+        issues.append("speaker_inversion")
     if retrieval_mode == "fact" and has_fact_report_leak(normalized_reply):
         issues.append("fact_report_leak")
 
@@ -595,6 +833,16 @@ def collect_reply_issues(query, reply, retrieval_mode, sources, deep_profile):
 
 
 def build_repair_reply(query, retrieval_mode, confidence, sources, deep_profile, fact_terms, issues):
+    if "children_memory_drift" in issues or asks_children_memory_context(query):
+        children_memory_reply = build_children_memory_reply(query, sources)
+        if children_memory_reply:
+            return children_memory_reply
+
+    if "children_context_confusion" in issues or asks_children_context(query):
+        children_reply = build_children_context_reply(query, deep_profile)
+        if children_reply:
+            return children_reply
+
     if "health_contradiction" in issues or asks_health_context_question(query) or asks_self_description(query):
         health_reply = build_health_context_reply(query, sources, deep_profile)
         if health_reply:
@@ -606,6 +854,10 @@ def build_repair_reply(query, retrieval_mode, confidence, sources, deep_profile,
     preference_reply = build_preference_reply(query, sources)
     if preference_reply:
         return preference_reply
+
+    family_mention_reply = build_family_mention_reply(query, deep_profile)
+    if family_mention_reply:
+        return family_mention_reply
 
     if asks_recent_messages(query):
         return build_recent_reply(sources, True)
@@ -644,6 +896,57 @@ def has_unwanted_citation(query, reply, normalized_reply):
 
 def has_bad_addressing(normalized_reply):
     return any(marker in normalized_reply for marker in ["¿die?", "?die", ", ¿die", ", ?die"])
+
+
+def has_children_context_confusion(query, normalized_reply):
+    return asks_children_context(query) and any(term in normalized_reply for term in ["prima", "primas", "primo", "primos"])
+
+
+def has_children_memory_drift(query, normalized_reply):
+    if not asks_children_memory_context(query):
+        return False
+
+    drift_markers = [
+        "no estoy aqui",
+        "ya no estoy aqui",
+        "no puedo hablar",
+        "no puedo seguir",
+        "estoy en paz",
+        "siempre estare contigo",
+        "siempre los ame",
+        "los ame",
+    ]
+    return any(marker in normalized_reply for marker in drift_markers)
+
+
+def has_speaker_inversion(query, normalized_reply):
+    normalized_query = normalize_for_match(query)
+    user_action_markers = [
+        "visite a",
+        "visite la",
+        "fui a ver",
+        "pase a ver",
+        "estuve con",
+        "me encontre",
+        "me cruce",
+        "hable con",
+        "charle con",
+    ]
+    if not any(marker in normalized_query for marker in user_action_markers):
+        return False
+
+    inverted_markers = [
+        "yo fui",
+        "fui a visitar",
+        "yo visite",
+        "hoy fui",
+        "hoy visite",
+        "me la encontre",
+        "me lo encontre",
+        "yo hable",
+        "estuve hablando con",
+    ]
+    return any(marker in normalized_reply for marker in inverted_markers)
 
 
 def has_health_contradiction(query, normalized_reply, sources, deep_profile):
@@ -783,7 +1086,7 @@ def extract_meaning_keywords(text):
     return seen[:4]
 
 
-def build_persona_reply(query, confidence, sources, persona_name, llm_provider, ollama_model, ollama_url, style_profile, deep_profile, feedback_examples, conversation_history):
+def build_persona_reply(query, confidence, sources, persona_name, llm_provider, ollama_model, ollama_url, anthropic_model, anthropic_url, anthropic_key, style_profile, deep_profile, feedback_examples, conversation_history, intent=None):
     if confidence == "none":
         return (
             "No tengo un recuerdo claro de eso en lo que guardaste. "
@@ -804,6 +1107,18 @@ def build_persona_reply(query, confidence, sources, persona_name, llm_provider, 
     if health_reply:
         return health_reply, "health-context-check"
 
+    children_memory_reply = build_children_memory_reply(lower_query, sources, force=(intent or {}).get("kind") == "children_memory")
+    if children_memory_reply:
+        return children_memory_reply, "children-memory-check"
+
+    children_reply = build_children_context_reply(lower_query, deep_profile)
+    if children_reply:
+        return children_reply, "children-context-check"
+
+    person_memory_reply = build_profile_person_memory_reply(lower_query, sources, deep_profile, force=(intent or {}).get("kind") == "person_memory")
+    if person_memory_reply:
+        return person_memory_reply, "profile-person-memory-check"
+
     person_reply = build_profile_person_reply(lower_query, deep_profile)
     if person_reply:
         return person_reply, "profile-person-check"
@@ -817,6 +1132,11 @@ def build_persona_reply(query, confidence, sources, persona_name, llm_provider, 
         if generated:
             return generated, f"ollama:{ollama_model}"
 
+    if llm_provider == "anthropic" and source_texts:
+        generated = build_anthropic_reply(query, sources, persona_name, anthropic_model, anthropic_url, anthropic_key, style_profile, deep_profile, feedback_examples, conversation_history)
+        if generated:
+            return generated, f"anthropic:{anthropic_model}"
+
     if asks_for_encouragement(lower_query):
         return build_encouragement_reply(persona_name, top_text, second_text), "fallback"
 
@@ -829,10 +1149,10 @@ def build_persona_reply(query, confidence, sources, persona_name, llm_provider, 
     return build_general_reply(top_text, second_text, dates), "fallback"
 
 
-def build_ollama_reply(query, sources, persona_name, model, url, style_profile, deep_profile, feedback_examples, conversation_history):
+def build_generation_prompts(query, sources, persona_name, style_profile, deep_profile, feedback_examples, conversation_history):
     prompt_sources = format_sources_for_prompt(sources)
     if not prompt_sources:
-        return None
+        return None, None
 
     style_prompt = format_style_profile_for_prompt(style_profile)
     deep_prompt = format_deep_profile_for_prompt(deep_profile)
@@ -845,6 +1165,7 @@ def build_ollama_reply(query, sources, persona_name, model, url, style_profile, 
         "Usa los perfiles de estilo y profundo solo para forma de hablar, relaciones y contexto general; no los uses como unica fuente de hechos nuevos. "
         "Usa el feedback aprobado o corregido por Diego solo como ejemplos de calidad y tono; no lo trates como recuerdo ni como hecho nuevo. "
         "Podes inventar frases nuevas y tono conversacional, pero no inventes recuerdos, hechos, pedidos, promesas ni fechas. "
+        "Si Diego cuenta algo que hizo el o algo que vio hoy, no lo transformes en una accion propia de Fabiana; responde acompanando lo que Diego conto. "
         "Si la evidencia no alcanza, decilo suavemente. "
         "No digas que sos IA, no menciones IDs tecnicos y no copies mensajes largos literalmente. "
         "Responde en primera persona, en espanol rioplatense natural, con 1 a 4 frases."
@@ -859,6 +1180,14 @@ def build_ollama_reply(query, sources, persona_name, model, url, style_profile, 
         f"{prompt_sources}\n\n"
         "Escribi una respuesta final nueva, como si Fabiana le respondiera ahora, manteniendote fiel a esas fuentes."
     )
+    return system_prompt, user_prompt
+
+
+def build_ollama_reply(query, sources, persona_name, model, url, style_profile, deep_profile, feedback_examples, conversation_history):
+    system_prompt, user_prompt = build_generation_prompts(query, sources, persona_name, style_profile, deep_profile, feedback_examples, conversation_history)
+    if not system_prompt or not user_prompt:
+        return None
+
     payload = {
         "model": model,
         "stream": False,
@@ -889,10 +1218,51 @@ def build_ollama_reply(query, sources, persona_name, model, url, style_profile, 
     return clean_generated_reply(content)
 
 
+def build_anthropic_reply(query, sources, persona_name, model, url, api_key, style_profile, deep_profile, feedback_examples, conversation_history):
+    if not api_key:
+        return None
+
+    system_prompt, user_prompt = build_generation_prompts(query, sources, persona_name, style_profile, deep_profile, feedback_examples, conversation_history)
+    if not system_prompt or not user_prompt:
+        return None
+
+    payload = {
+        "model": model,
+        "max_tokens": 220,
+        "temperature": 0.65,
+        "system": system_prompt,
+        "messages": [
+            {"role": "user", "content": user_prompt},
+        ],
+    }
+
+    try:
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=75) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+        return None
+
+    parts = []
+    for block in result.get("content", []):
+        if block.get("type") == "text" and block.get("text"):
+            parts.append(block["text"])
+    return clean_generated_reply("\n".join(parts))
+
+
 def format_sources_for_prompt(sources):
     rows = []
     for index, source in enumerate(sources[:8], start=1):
-        text = clean_source_text(source.get("text", ""))
+        text = clean_source_text(source.get("displayText") or source.get("text", ""))
         if not text:
             continue
         date = source.get("localDate") or "sin fecha"
@@ -904,6 +1274,7 @@ def format_sources_for_prompt(sources):
 def display_source_type(source_type):
     labels = {
         "user_assertion": "dato personal confirmado por Diego",
+        "conversation_context": "contexto conversacional",
         "whatsapp_text": "mensaje de WhatsApp",
         "audio_transcript": "audio transcripto de WhatsApp",
         "facebook_text": "mensaje de Facebook",
@@ -990,8 +1361,126 @@ def read_optional_history(raw_history):
     return history
 
 
+def classify_query_intent(original_query, effective_query, history, deep_profile, response_mode="auto"):
+    normalized_original = normalize_for_match(original_query)
+    normalized_query = normalize_for_match(effective_query)
+    names = resolve_profile_person_names(normalized_query, deep_profile)
+
+    if response_mode == "dialogue":
+        return build_intent("dialogue", "dialogo elegido", "dialogue", "none", response_mode)
+    if response_mode == "sources":
+        return build_intent("source_explorer", "explorar fuentes", "semantic", "episodes", response_mode)
+    if response_mode == "memory":
+        if asks_recent_messages(normalized_query):
+            return build_intent("recent", "ultimos mensajes", "chronological", "dated", response_mode)
+        if needs_children_memory_resolution(normalized_original, history) or asks_children_context(normalized_query):
+            return build_intent("children_memory", "recuerdo de los chicos", "semantic", "episodes", response_mode)
+        if asks_health_context_question(normalized_query) or asks_self_description(normalized_query):
+            return build_intent("health_context", "contexto personal/salud", "semantic", "episodes", response_mode)
+        if len(names) == 1:
+            return build_intent("person_memory", f"recuerdo sobre {names[0]}", "semantic", "episodes", response_mode)
+        return build_intent("memory", "recuerdo real elegido", "semantic", "episodes", response_mode)
+
+    if asks_recent_messages(normalized_query):
+        return build_intent("recent", "ultimos mensajes", "chronological", "dated", response_mode)
+
+    if asks_identity_fact(normalized_query) and not asks_deeper_profile_person_context(normalized_query):
+        return build_intent("fact", "dato familiar", "fact", "profile", response_mode)
+
+    if is_dialogue_update(normalized_query):
+        return build_intent("dialogue", "dialogo actual", "dialogue", "none", response_mode)
+
+    if needs_children_memory_resolution(normalized_original, history) or asks_children_memory_context(normalized_query):
+        return build_intent("children_memory", "recuerdo de los chicos", "semantic", "episodes", response_mode)
+
+    if asks_children_context(normalized_query):
+        return build_intent("children_context", "contexto de los chicos", "semantic", "profile", response_mode)
+
+    if asks_health_context_question(normalized_query) or asks_self_description(normalized_query):
+        return build_intent("health_context", "contexto personal/salud", "semantic", "episodes", response_mode)
+
+    if asks_deeper_profile_person_context(normalized_query) and len(names) == 1:
+        relation = profile_relation_for_person(names[0], deep_profile)
+        if relation in ["hijo", "hija", "marido", "hermano", "hermana", "abuela", "abuelo", "prima", "primo"]:
+            return build_intent("person_memory", f"recuerdo sobre {names[0]}", "semantic", "episodes", response_mode)
+
+    if asks_preference_question(normalized_query):
+        return build_intent("preference", "preferencia confirmada", "semantic", "balanced", response_mode)
+
+    if asks_profile_person_context(normalized_query) or is_family_conversation_statement(normalized_query):
+        return build_intent("profile", "perfil familiar", "semantic", "profile", response_mode)
+
+    if asks_memory_question(normalized_query) or asks_open_memory_prompt(normalized_query):
+        return build_intent("memory", "recuerdo narrativo", "semantic", "episodes", response_mode)
+
+    return build_intent("semantic", "busqueda general", "semantic", "balanced", response_mode)
+
+
+def build_intent(kind, label, route, source_policy, response_mode="auto"):
+    return {
+        "kind": kind,
+        "label": label,
+        "route": route,
+        "sourcePolicy": source_policy,
+        "responseMode": response_mode,
+    }
+
+
+def asks_open_memory_prompt(query):
+    triggers = [
+        "contame",
+        "decime",
+        "hablame",
+        "algo sobre",
+        "que paso",
+        "que pasaba",
+        "recordas",
+        "acordas",
+    ]
+    return any(trigger in query for trigger in triggers)
+
+
+def enrich_query_for_intent(query, intent, deep_profile):
+    kind = intent.get("kind")
+    normalized_query = normalize_for_match(query)
+
+    if kind == "children_memory":
+        return f"{query} los chicos hijos Leandro Agustina Bianca escuela colegio casa rutina cotidiano horarios cuidar"
+
+    if kind == "health_context":
+        return f"{query} estomago digestivo malestar medico estudios tratamiento turnos endoscopia peso sentir mal"
+
+    if kind == "person_memory":
+        matched_names = resolve_profile_person_names(normalized_query, deep_profile)
+        if len(matched_names) == 1:
+            name = matched_names[0]
+            normalized_name = normalize_for_match(name)
+            if normalized_name == "leandro":
+                return (
+                    f"{query} Leandro Lean Lea Leo ayuda ayudar organizar casa "
+                    "retirar buscar sentia mal termino cotidiano rutina escuela"
+                )
+            if normalized_name == "agustina":
+                return f"{query} Agustina Agus casa ayuda escuela colegio rutina cotidiano"
+            if normalized_name == "bianca":
+                return f"{query} Bianca Bian escuela casa retirar buscar rutina cotidiano"
+        return f"{query} cotidiano rutina casa familia charla episodio"
+
+    if kind == "memory":
+        return f"{query} recuerdo episodio conversacion audio whatsapp rutina cotidiano"
+
+    return query
+
+
 def resolve_contextual_query(query, history, deep_profile):
     normalized_query = normalize_for_match(query)
+    if needs_children_memory_resolution(normalized_query, history):
+        return f"{query} los chicos hijos Leandro Agustina Bianca escuela colegio casa rutina cotidiano"
+
+    enriched_profile_query = enrich_deeper_profile_person_query(query, normalized_query, deep_profile)
+    if enriched_profile_query:
+        return enriched_profile_query
+
     if not needs_context_resolution(normalized_query):
         return query
 
@@ -1000,6 +1489,29 @@ def resolve_contextual_query(query, history, deep_profile):
         return query
 
     return f"{query} {referenced_name}"
+
+
+def enrich_deeper_profile_person_query(query, normalized_query, deep_profile):
+    if not asks_deeper_profile_person_context(normalized_query):
+        return None
+
+    matched_names = resolve_profile_person_names(normalized_query, deep_profile)
+    if len(matched_names) != 1:
+        return None
+
+    name = matched_names[0]
+    relation = profile_relation_for_person(name, deep_profile)
+    if relation not in ["hijo", "hija"]:
+        return None
+
+    normalized_name = normalize_for_match(name)
+    if normalized_name == "leandro":
+        return (
+            f"{query} Leandro Lean Lea Leo ayuda ayudar organizar casa "
+            "retirar buscar sentia mal termino cotidiano rutina"
+        )
+
+    return f"{query} {name} cotidiano rutina casa escuela colegio familia"
 
 
 def needs_context_resolution(query):
@@ -1017,6 +1529,50 @@ def needs_context_resolution(query):
         "decime mas",
     ]
     return any(trigger in query for trigger in triggers)
+
+
+def needs_children_memory_resolution(query, history):
+    if not recent_history_mentions_children(history):
+        return False
+
+    triggers = [
+        "ellos",
+        "con ellos",
+        "sobre ellos",
+        "ese tema",
+        "este tema",
+        "tiempo pasado",
+        "haya pasado",
+        "que paso",
+        "que paso con",
+        "pasado",
+        "cotidiano",
+        "cotidianas",
+        "cotidianos",
+    ]
+    return any(trigger in query for trigger in triggers)
+
+
+def recent_history_mentions_children(history):
+    child_terms = [
+        "los chicos",
+        "mis chicos",
+        "mis hijos",
+        "mis hijas",
+        "leandro",
+        "lean",
+        "lea",
+        "leo",
+        "agustina",
+        "agus",
+        "bianca",
+        "bian",
+    ]
+    for row in reversed(history[-6:]):
+        content = normalize_for_match(row.get("content", ""))
+        if any(contains_word(content, term) for term in child_terms):
+            return True
+    return False
 
 
 def find_recent_profile_name(history, deep_profile):
@@ -1084,6 +1640,14 @@ def is_profile_name_candidate(value):
         "quiero",
         "gracias",
         "durante",
+        "los",
+        "las",
+        "mis",
+        "tus",
+        "sus",
+        "tambien",
+        "chicos",
+        "chicas",
     }
     return len(normalized) > 2 and normalized not in blocked and re.match(r"^[a-z]+$", normalized) is not None
 
@@ -1195,6 +1759,91 @@ def summarize_feedback_examples(examples):
         "exampleCount": len(examples),
         "approvedCount": sum(1 for example in examples if example.get("rating") == "approved"),
         "correctedCount": sum(1 for example in examples if example.get("rating") == "corrected"),
+    }
+
+
+def assess_answer_quality(reply, generation_mode, retrieval_mode, confidence, sources, validation, intent):
+    normalized_reply = normalize_for_match(reply)
+    source_types = {source.get("sourceType") for source in sources}
+    issues = []
+    score = 100
+
+    if confidence == "none":
+        issues.append({
+            "code": "no_evidence",
+            "label": "Sin evidencia clara",
+            "severity": "high",
+        })
+        score -= 45
+    elif confidence == "low":
+        issues.append({
+            "code": "low_confidence",
+            "label": "Evidencia debil",
+            "severity": "medium",
+        })
+        score -= 20
+
+    if not sources:
+        issues.append({
+            "code": "empty_sources",
+            "label": "No hay fuentes adjuntas",
+            "severity": "high",
+        })
+        score -= 35
+
+    validation_status = validation.get("summary", {}).get("status")
+    if validation_status and validation_status != "ok":
+        issues.append({
+            "code": "validation_repaired",
+            "label": f"Validador: {validation_status}",
+            "severity": "medium",
+        })
+        score -= 15
+
+    if generation_mode.startswith(("ollama:", "anthropic:")) and "conversation_context" not in source_types:
+        issues.append({
+            "code": "generative_without_episode",
+            "label": "Generativa sin episodio conversacional",
+            "severity": "medium",
+        })
+        score -= 12
+
+    report_markers = ["lo ultimo que encuentro", "encontre", "fuentes recuperadas", "segun las fuentes"]
+    if any(marker in normalized_reply for marker in report_markers):
+        issues.append({
+            "code": "report_style",
+            "label": "Suena a informe o cita",
+            "severity": "medium",
+        })
+        score -= 18
+
+    grief_markers = ["ya no estoy", "estoy en paz", "siempre estare contigo", "desde donde estoy"]
+    if any(marker in normalized_reply for marker in grief_markers):
+        issues.append({
+            "code": "grief_drift",
+            "label": "Se fue a despedida o duelo",
+            "severity": "high",
+        })
+        score -= 30
+
+    if intent.get("kind") in {"person_memory", "children_memory"} and "conversation_context" in source_types:
+        score += 4
+
+    score = max(0, min(100, score))
+    if score >= 82:
+        label = "alta"
+    elif score >= 62:
+        label = "media"
+    else:
+        label = "baja"
+
+    return {
+        "schemaVersion": 1,
+        "score": score,
+        "label": label,
+        "issues": issues,
+        "sourceMix": sorted(source_type for source_type in source_types if source_type),
+        "recommendedAction": "approve_or_correct" if score >= 62 else "review_before_trusting",
     }
 
 
@@ -1359,9 +2008,27 @@ FACT_NAME_STOP_WORDS = {
 }
 
 
+FAMILY_TRANSCRIPTION_ALIASES = {
+    "bianca": ["avianca", "vianca", "vian"],
+}
+
+
 def asks_identity_fact(query):
     relation_terms = FAMILY_RELATION_TERMS
-    identity_triggers = ["se llama", "llama", "es tu", "tu ", "tus ", "te acordas de", "recordas a", "recordas de"]
+    identity_triggers = [
+        "se llama",
+        "llama",
+        "es tu",
+        "tu ",
+        "tus ",
+        "tenes",
+        "tenias",
+        "tiene",
+        "tenia",
+        "te acordas de",
+        "recordas a",
+        "recordas de",
+    ]
     return any(contains_word(query, term) for term in relation_terms) and any(trigger in query for trigger in identity_triggers)
 
 
@@ -1421,6 +2088,16 @@ def build_family_entity_index(deep_profile):
             "relation": alias_row.get("relation"),
             "object": name,
         })
+
+    for normalized_name, aliases in FAMILY_TRANSCRIPTION_ALIASES.items():
+        entity = entities.get(normalized_name)
+        if not entity:
+            continue
+        for alias in aliases:
+            normalized_alias = normalize_for_match(alias)
+            if normalized_alias:
+                entity["aliases"].add(normalized_alias)
+                entity["aliases"].add(normalized_alias.replace(" ", ""))
 
     for entity in entities.values():
         entity["aliases"] = sorted(alias for alias in entity["aliases"] if alias)
@@ -1607,6 +2284,76 @@ def build_general_reply(top_text, second_text, dates):
     return reply
 
 
+def is_dialogue_update(query):
+    if is_question_like(query):
+        return False
+
+    openers = [
+        "te cuento",
+        "queria contarte",
+        "queria decirte",
+        "te queria contar",
+        "hoy",
+        "manana",
+        "ayer",
+        "recien",
+    ]
+    first_person_markers = [
+        " voy ",
+        " fui ",
+        " visite ",
+        " hable ",
+        " charle ",
+        " estuve ",
+        " tengo ",
+        " me ",
+        " estoy ",
+        " necesito ",
+        " quiero ",
+    ]
+    padded = f" {query} "
+    return any(query.startswith(opener) for opener in openers) and any(marker in padded for marker in first_person_markers)
+
+
+def is_question_like(query):
+    question_starts = [
+        "que ",
+        "quien ",
+        "quienes ",
+        "como ",
+        "cuando ",
+        "donde ",
+        "cual ",
+        "cuales ",
+        "por que ",
+        "te acordas",
+        "recordas",
+        "acordas",
+        "tenes ",
+        "sabes ",
+    ]
+    return "?" in query or any(query.startswith(start) for start in question_starts)
+
+
+def build_dialogue_reply(query, original_query):
+    if any(term in query for term in ["medico", "doctor", "turno", "consulta", "hospital", "clinica"]):
+        when = "mañana" if "manana" in query else "hoy" if "hoy" in query else ""
+        when_text = f" {when}" if when else ""
+        return f"Ay die, ojalá salga todo bien{when_text} en el médico. Después contame cómo te fue, ¿sí?"
+
+    if any(term in query for term in ["triste", "mal", "angustiado", "angustiada", "preocupado", "preocupada"]):
+        return "Ay die, venite despacio con eso. Conta conmigo para hablarlo, si?"
+
+    if any(term in query for term in ["contento", "contenta", "feliz", "bien"]):
+        return "Ay die, que bueno leerte asi. Me alegra mucho, de verdad."
+
+    clean = clean_source_text(original_query)
+    if len(clean) > 0:
+        return "Ay die, gracias por contarme. Despues contame bien como siguio todo, si?"
+
+    return "Ay die, contame un poquito mas y te sigo."
+
+
 def build_preference_reply(query, sources):
     if not asks_preference_question(query):
         return None
@@ -1729,6 +2476,273 @@ def find_profile_health_facts(deep_profile):
     return rows
 
 
+def build_children_context_reply(query, deep_profile):
+    if not asks_children_context(query):
+        return None
+
+    children = profile_children(deep_profile)
+    if not children:
+        return None
+
+    if asks_children_care_context(query):
+        return (
+            "Si, die, los tenia muy presentes a los tres. Estar pendiente de los chicos era eso: "
+            "tener a Leandro, Agustina y Bianca en la cabeza, que estuvieran bien y acompañarlos en las cosas de todos los dias."
+        )
+
+    details = []
+    for child in children:
+        age = child.get("age")
+        if age:
+            details.append(f"{child['name']} tiene {age} años")
+        else:
+            relation = "hijo" if child["relation"] == "hijo" else "hija"
+            details.append(f"{child['name']} es mi {relation}")
+
+    return f"Si, die, cuando digo los chicos hablo de mis hijos: {format_sentence_list(details)}."
+
+
+def build_children_memory_reply(query, sources, force=False):
+    if not force and not asks_children_memory_context(query):
+        return None
+
+    rows = find_children_memory_sources(sources)
+    if not rows:
+        return None
+
+    themes = detect_children_memory_themes(rows)
+    if not themes:
+        return None
+
+    theme_sentence = format_children_memory_themes(themes)
+    if not theme_sentence:
+        return None
+
+    return (
+        "Si, die. Me aparecen cosas de todos los dias con Leandro, Agustina y Bianca: "
+        f"{theme_sentence}. Era bastante de esa rutina, estar atras de los horarios y que estuvieran bien."
+    )
+
+
+def find_children_memory_sources(sources):
+    rows = []
+    child_terms = [
+        "leandro",
+        "lean",
+        "lea",
+        "leo",
+        "agustina",
+        "agus",
+        "bianca",
+        "bian",
+        "los chicos",
+        "chicos",
+        "hijos",
+        "hijas",
+        "escuela",
+        "colegio",
+        "clase",
+        "clases",
+        "acto",
+        "jura",
+        "casa",
+        "orden",
+        "platos",
+        "pieza",
+    ]
+    for source in sources:
+        if source.get("sourceType") == "user_assertion":
+            continue
+        text = clean_source_text(source.get("text", ""))
+        normalized = normalize_for_match(text)
+        if any(contains_word(normalized, term) for term in child_terms):
+            rows.append({
+                "text": text,
+                "normalized": normalized,
+                "timestamp": source.get("timestamp") or "",
+            })
+    return rows
+
+
+def detect_children_memory_themes(rows):
+    theme_patterns = [
+        ("la escuela, clases o actos", ["escuela", "colegio", "clase", "clases", "acto", "jura", "bandera"]),
+        ("llevarlos, buscarlos o acomodar horarios", ["buscar", "buscarlos", "llevar", "llevarlos", "voy con", "venia", "venir", "horario", "tarde"]),
+        ("la casa, el orden y las cosas domesticas", ["casa", "orden", "ordenar", "platos", "pieza", "desastre", "ensucia", "limpiar"]),
+        ("ver que estuvieran bien y acompaniarlos", ["bien", "fiebre", "gripe", "medico", "dolor", "cuid", "acompan"]),
+        ("pequenas idas y vueltas de cada dia", ["vamos", "vengan", "salir", "rato", "cumple", "domingo", "manana", "tarde"]),
+    ]
+    themes = []
+    joined = "\n".join(row["normalized"] for row in rows[:10])
+    for label, patterns in theme_patterns:
+        if any(pattern in joined for pattern in patterns):
+            themes.append(label)
+    return themes[:3]
+
+
+def format_children_memory_themes(themes):
+    if not themes:
+        return None
+    if len(themes) == 1:
+        return themes[0]
+    if len(themes) == 2:
+        return f"{themes[0]} y {themes[1]}"
+    return f"{themes[0]}, {themes[1]} y {themes[2]}"
+
+
+def asks_children_memory_context(query):
+    memory_terms = [
+        "paso",
+        "pasaba",
+        "pasado",
+        "haya pasado",
+        "tiempo pasado",
+        "cotidiano",
+        "cotidiana",
+        "cotidianas",
+        "cotidianos",
+        "rutina",
+        "escuela",
+        "colegio",
+        "casa",
+        "dia",
+        "dias",
+        "tema",
+        "mas detalle",
+        "mas sobre",
+        "más sobre",
+    ]
+    return asks_children_context(query) and any(term in query for term in memory_terms)
+
+
+def asks_children_context(query):
+    child_terms = [
+        "los chicos",
+        "mis chicos",
+        "chicos",
+        "las chicas",
+        "mis hijitos",
+        "mis hijos",
+        "mis hijas",
+    ]
+    return any(contains_word(query, term) for term in child_terms)
+
+
+def asks_children_care_context(query):
+    care_terms = ["pendiente", "cuid", "tema", "mas sobre", "más sobre", "dia a dia", "dia a día", "todos los dias", "todos los días"]
+    return asks_children_context(query) and any(term in query for term in care_terms)
+
+
+def build_profile_person_memory_reply(query, sources, deep_profile, force=False):
+    if not force and not asks_deeper_profile_person_context(query):
+        return None
+
+    matched_names = resolve_profile_person_names(query, deep_profile)
+    if len(matched_names) != 1:
+        return None
+
+    name = matched_names[0]
+    relation = profile_relation_for_person(name, deep_profile)
+    if relation not in ["hijo", "hija"]:
+        return None
+
+    rows = find_profile_person_memory_sources(name, sources, deep_profile)
+    if not rows:
+        return None
+
+    normalized_name = normalize_for_match(name)
+    if normalized_name == "leandro":
+        return build_leandro_memory_reply(rows)
+
+    themes = detect_profile_person_memory_themes(rows)
+    if not themes:
+        return None
+
+    relation_text = "mi hijo" if relation == "hijo" else "mi hija"
+    return f"Si, die. Sobre {name}, {relation_text}, me aparecen cosas de todos los dias: {format_children_memory_themes(themes)}."
+
+
+def build_leandro_memory_reply(rows):
+    normalized_blob = "\n".join(row["normalized"] for row in rows[:8])
+    parts = []
+    if any(term in normalized_blob for term in ["organizar", "ayud", "asude", "asugar", "mando a el", "lo mando"]):
+        parts.append("me organizaba con el para que me diera una mano")
+    if "retirar" in normalized_blob and "bianca" in normalized_blob:
+        parts.append("si yo me sentia mal, podia pedirle que fuera a buscar a Bianca")
+    if any(term in normalized_blob for term in ["termino", "todo el dia", "no esta haciendo nada", "tener aca"]):
+        parts.append("lo tenia cerca en casa y contaba con el para esas vueltas")
+
+    if not parts:
+        themes = detect_profile_person_memory_themes(rows)
+        if not themes:
+            return None
+        parts = themes
+
+    return (
+        "Si, die. De Leandro me acuerdo mas de lo cotidiano: "
+        f"{format_children_memory_themes(parts)}. "
+        "Lo tengo muy asociado a esa organizacion familiar de todos los dias, ayudando cuando hacia falta."
+    )
+
+
+def find_profile_person_memory_sources(name, sources, deep_profile):
+    aliases = profile_aliases_for_name(name, deep_profile)
+    rows = []
+    for source in sources:
+        if source.get("sourceType") == "user_assertion":
+            continue
+        text = clean_source_text(source.get("text", ""))
+        normalized = normalize_for_match(text)
+        if any(contains_word(normalized, alias) for alias in aliases):
+            rows.append({
+                "text": text,
+                "normalized": normalized,
+                "timestamp": source.get("timestamp") or "",
+                "sourceType": source.get("sourceType"),
+            })
+    return rows
+
+
+def profile_aliases_for_name(name, deep_profile):
+    normalized_name = normalize_for_match(name)
+    aliases = {normalized_name}
+    for entity in build_family_entity_index(deep_profile):
+        if normalize_for_match(entity.get("name", "")) == normalized_name:
+            aliases.update(entity.get("aliases", []))
+    return sorted(alias for alias in aliases if alias)
+
+
+def detect_profile_person_memory_themes(rows):
+    theme_patterns = [
+        ("la escuela o el colegio", ["escuela", "colegio", "clase", "clases", "acto", "jura"]),
+        ("ayuda y organizacion en casa", ["ayud", "organizar", "casa", "orden", "termino", "todo el dia"]),
+        ("ir, venir o retirar a alguien", ["retirar", "buscar", "llevar", "voy con", "mando"]),
+        ("que estuviera bien", ["bien", "fiebre", "gripe", "medico", "dolor", "sentia mal", "cuid"]),
+        ("planes familiares y salidas", ["vamos", "vengan", "salir", "cumple", "finde"]),
+    ]
+    themes = []
+    joined = "\n".join(row["normalized"] for row in rows[:10])
+    for label, patterns in theme_patterns:
+        if any(pattern in joined for pattern in patterns):
+            themes.append(label)
+    return themes[:3]
+
+
+def asks_deeper_profile_person_context(query):
+    triggers = [
+        "contame mas",
+        "contame más",
+        "mas sobre",
+        "más sobre",
+        "mas detalle",
+        "más detalle",
+        "algo mas",
+        "algo más",
+        "profund",
+    ]
+    return any(trigger in query for trigger in triggers)
+
+
 def build_profile_person_reply(query, deep_profile):
     if not asks_profile_person_context(query):
         return None
@@ -1765,6 +2779,9 @@ def build_family_mention_reply(query, deep_profile):
 
     matched_names = resolve_profile_person_names(query, deep_profile)
     if not matched_names:
+        relation_reply = build_family_relation_event_reply(query, deep_profile)
+        if relation_reply:
+            return relation_reply
         return None
 
     name = matched_names[0]
@@ -1775,10 +2792,34 @@ def build_family_mention_reply(query, deep_profile):
     if any(term in query for term in ["hable", "hablaste", "hablando", "charle", "charlaste", "charlando"]):
         return f"Ay die, que bueno que hayas hablado con {name}. {name} es mi {relation}."
 
-    if any(term in query for term in ["vi a", "viste a", "estuve con", "me encontre", "me cruce"]):
+    if is_family_visit_statement(query):
         return f"Ay die, que lindo. {name} es mi {relation}."
 
     return f"Si, die, {name} es mi {relation}."
+
+
+def build_family_relation_event_reply(query, deep_profile):
+    relations = [
+        relation
+        for relation in FAMILY_RELATION_TERMS
+        if contains_word(query, relation)
+    ]
+    if not relations:
+        return None
+
+    rows = profile_relation_rows(deep_profile, relations)
+    if not rows:
+        return None
+
+    row = rows[0]
+    name = row["name"]
+    relation = display_relation_from_profile(row["relation"])
+    if is_family_conversation_about_talking(query):
+        return f"Ay die, que bueno que hayas hablado con {name}. Es {relation}."
+    if is_family_visit_statement(query):
+        return f"Ay die, que lindo que hayas visitado a {name}. Es {relation}."
+
+    return None
 
 
 def is_family_conversation_statement(query):
@@ -1789,13 +2830,26 @@ def is_family_conversation_statement(query):
         "charle",
         "charlaste",
         "charlando",
+        "visite",
+        "visitaste",
+        "visitar",
         "vi a",
         "viste a",
+        "fui a ver",
+        "pase a ver",
         "estuve con",
         "me encontre",
         "me cruce",
     ]
     return any(trigger in query for trigger in triggers)
+
+
+def is_family_conversation_about_talking(query):
+    return any(term in query for term in ["hable", "hablaste", "hablando", "charle", "charlaste", "charlando"])
+
+
+def is_family_visit_statement(query):
+    return any(term in query for term in ["visite", "visitaste", "visitar", "vi a", "viste a", "fui a ver", "pase a ver", "estuve con", "me encontre", "me cruce"])
 
 
 def profile_relation_for_person(name, deep_profile):
@@ -1831,10 +2885,90 @@ def build_profile_relation_reply(query, fact_terms, deep_profile):
 
         return format_children_reply(children)
 
+    pet_reply = build_pet_relation_reply(deep_profile, relations)
+    if pet_reply:
+        return pet_reply
+
     relation_rows = profile_relation_rows(deep_profile, relations)
     if relation_rows:
         return format_relation_rows_reply(relation_rows)
 
+    return None
+
+
+def build_pet_relation_reply(deep_profile, requested_relations):
+    if not any(is_pet_relation(relation) for relation in requested_relations):
+        return None
+
+    rows = profile_pet_rows(deep_profile, requested_relations)
+    if not rows:
+        return None
+
+    perritos = [row["name"] for row in rows if row["kind"] == "perrito"]
+    convivientes = [row["name"] for row in rows if row["kind"] == "perro_conviviente"]
+    gatitos = [row["name"] for row in rows if row["kind"] == "gatito"]
+    parts = []
+
+    if perritos:
+        parts.append(f"mis perritos son {format_name_list(perritos)}")
+    if convivientes:
+        verb = "vivia" if len(convivientes) == 1 else "vivian"
+        parts.append(f"{format_name_list(convivientes)} tambien {verb} conmigo")
+    if gatitos:
+        relation = "mi gatito era" if len(gatitos) == 1 else "mis gatitos eran"
+        parts.append(f"{relation} {format_name_list(gatitos)}")
+
+    if not parts:
+        return None
+
+    return f"Si, die, {'; '.join(parts)}."
+
+
+def profile_pet_rows(deep_profile, requested_relations):
+    normalized_requests = [normalize_for_match(relation) for relation in requested_relations]
+    include_all = any(canonical_profile_relation(relation) == "mascota" for relation in requested_relations)
+    include_dogs = include_all or any(canonical_profile_relation(relation) == "perrito" for relation in requested_relations)
+    include_conviviente_dogs = include_all or any(relation in ["perro", "perros", "perra", "perras"] for relation in normalized_requests)
+    include_cats = include_all or any(canonical_profile_relation(relation) == "gatito" for relation in requested_relations)
+    rows = []
+    seen = set()
+
+    for relation in deep_profile.get("relationshipMap", {}).get("relationships", []):
+        subject = normalize_for_match(relation.get("subject", ""))
+        if subject != "fabiana":
+            continue
+
+        name = str(relation.get("object") or "").strip()
+        kind = pet_kind_from_relation(relation.get("relation"))
+        if not name or not kind:
+            continue
+        if kind in ["perrito", "perro_conviviente"] and not include_dogs:
+            continue
+        if kind == "perro_conviviente" and not include_conviviente_dogs:
+            continue
+        if kind == "gatito" and not include_cats:
+            continue
+
+        key = (normalize_for_match(name), kind)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append({"name": name, "kind": kind})
+
+    return rows
+
+
+def is_pet_relation(relation):
+    return canonical_profile_relation(relation) in ["perrito", "gatito", "mascota"]
+
+
+def pet_kind_from_relation(relation):
+    normalized = normalize_for_match(relation or "")
+    if "perro que vivia" in normalized:
+        return "perro_conviviente"
+    canonical = canonical_profile_relation(normalized)
+    if canonical in ["perrito", "gatito"]:
+        return canonical
     return None
 
 
@@ -1916,6 +3050,7 @@ def canonical_profile_relation(relation):
         "gatas": "gatito",
         "gato": "gatito",
         "gata": "gatito",
+        "mascotas": "mascota",
     }
     return aliases.get(relation_name, relation_name)
 
@@ -2020,6 +3155,14 @@ def format_name_list(names):
     return f"{', '.join(names[:-1])} y {names[-1]}"
 
 
+def format_sentence_list(items):
+    if len(items) == 1:
+        return items[0]
+    if len(items) == 2:
+        return f"{items[0]} y {items[1]}"
+    return f"{', '.join(items[:-1])} y {items[-1]}"
+
+
 def asks_profile_person_context(query):
     triggers = [
         "acerca de",
@@ -2090,9 +3233,30 @@ def clean_source_text(text):
     return " ".join(text.split())
 
 
+def corrected_display_source_text(text):
+    corrected = str(text or "")
+    for alias in FAMILY_TRANSCRIPTION_ALIASES.get("bianca", []):
+        corrected = re.sub(rf"(?<![A-Za-z0-9ÁÉÍÓÚÑáéíóúñ]){re.escape(alias)}(?![A-Za-z0-9ÁÉÍÓÚÑáéíóúñ])", "Bianca", corrected, flags=re.IGNORECASE)
+    corrected = re.sub(r"\bretirar\s+(?:el|la)\s+Bianca\b", "retirar a Bianca", corrected, flags=re.IGNORECASE)
+    corrected = re.sub(r"\bretirar\s+Bianca\b", "retirar a Bianca", corrected, flags=re.IGNORECASE)
+    corrected = re.sub(r"\basude\b", "ayude", corrected, flags=re.IGNORECASE)
+    corrected = re.sub(r"\basugar\b", "ayudar", corrected, flags=re.IGNORECASE)
+    corrected = re.sub(r"\bel pedo\b", "al pedo", corrected, flags=re.IGNORECASE)
+    return corrected
+
+
 def normalize_for_match(text):
     normalized = unicodedata.normalize("NFD", text.lower())
-    return "".join(character for character in normalized if unicodedata.category(character) != "Mn")
+    normalized = "".join(character for character in normalized if unicodedata.category(character) != "Mn")
+    return normalize_transcription_aliases(normalized)
+
+
+def normalize_transcription_aliases(text):
+    normalized = text
+    for canonical, aliases in FAMILY_TRANSCRIPTION_ALIASES.items():
+        for alias in aliases:
+            normalized = re.sub(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", canonical, normalized)
+    return normalized
 
 
 def shorten(text, limit):

@@ -5,6 +5,7 @@ const MEDIA_REFERENCE =
   /(?<filename>[\w().\-\s]+?\.(?:opus|ogg|m4a|jpg|jpeg|png|webp|mp4|pdf|vcf))\b/i;
 
 const AUDIO_EXTENSIONS = new Set(["opus", "ogg", "m4a"]);
+const VIDEO_EXTENSIONS = new Set(["mp4", "mov", "m4v", "3gp", "webm"]);
 
 export function parseWhatsAppText(text, options = {}) {
   const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
@@ -233,7 +234,7 @@ export function buildAudioCandidates(messages) {
       zipEntryName: message.media.zipEntryName,
       bytes: message.media.bytes,
       mediaStatus: message.media.status,
-      priority: audioPriority(message),
+      priority: mediaPriority(message),
       source: {
         messageId: message.id,
         lineStart: message.source.lineStart,
@@ -247,7 +248,41 @@ export function buildAudioCandidates(messages) {
   };
 }
 
+export function buildVideoCandidates(messages) {
+  const candidates = messages
+    .filter((message) => message.media && VIDEO_EXTENSIONS.has(message.media.extension))
+    .map((message) => ({
+      id: `video_${message.id}`,
+      messageId: message.id,
+      timestamp: message.timestamp,
+      localDate: message.localDate,
+      localTime: message.localTime,
+      role: message.role,
+      participantId: message.participantId,
+      filename: message.media.filename,
+      extension: message.media.extension,
+      zipEntryName: message.media.zipEntryName,
+      bytes: message.media.bytes,
+      mediaStatus: message.media.status,
+      priority: mediaPriority(message),
+      source: {
+        messageId: message.id,
+        lineStart: message.source.lineStart,
+        lineEnd: message.source.lineEnd
+      }
+    }));
+
+  return {
+    candidates,
+    manifest: buildMediaManifest(candidates)
+  };
+}
+
 export function buildAudioManifest(candidates) {
+  return buildMediaManifest(candidates);
+}
+
+export function buildMediaManifest(candidates) {
   const byRole = {};
   const byExtension = {};
   const byStatus = {};
@@ -554,7 +589,7 @@ function normalizeMedia(media, inventory) {
   };
 }
 
-function audioPriority(message) {
+function mediaPriority(message) {
   if (message.media?.status !== "matched") {
     return 0;
   }

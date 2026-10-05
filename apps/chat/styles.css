@@ -137,6 +137,44 @@ select {
   font-size: 12px;
 }
 
+.quality-strip {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.quality-strip div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.quality-strip span {
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+  padding: 2px 7px;
+}
+
+.quality-strip.alta {
+  background: #eefaf7;
+  border-color: #bfebe1;
+}
+
+.quality-strip.media {
+  background: #fff8e8;
+  border-color: #f3d9a6;
+}
+
+.quality-strip.baja {
+  background: #fff0f0;
+  border-color: #efb4b4;
+}
+
 .bubble-actions {
   display: flex;
   align-items: center;
@@ -274,7 +312,7 @@ button:disabled {
 
 .sources-pane {
   display: grid;
-  grid-template-rows: auto minmax(220px, 1fr) minmax(220px, 42%);
+  grid-template-rows: auto minmax(150px, 0.75fr) minmax(170px, 0.75fr) minmax(150px, 0.65fr) minmax(150px, 0.65fr) minmax(210px, 0.95fr);
 }
 
 .sources-pane header {
@@ -318,9 +356,62 @@ button:disabled {
   color: #2d333b;
   font-size: 14px;
   line-height: 1.45;
+}
+
+.source-text {
   white-space: pre-wrap;
 }
 
+.source-audio {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.source-audio span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.source-audio audio {
+  width: 100%;
+  max-width: 320px;
+}
+
+.episode-meta {
+  display: grid;
+  grid-template-columns: auto auto auto;
+  gap: 6px 8px;
+  align-items: center;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.episode-meta strong {
+  color: var(--accent-strong);
+}
+
+.episode-themes {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.episode-themes span,
+.profile-tags span {
+  border-radius: 999px;
+  background: var(--soft);
+  color: var(--accent-strong);
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.profile-panel,
+.learning-panel,
 .entity-review {
   min-height: 0;
   border-top: 1px solid var(--line);
@@ -328,17 +419,120 @@ button:disabled {
   grid-template-rows: auto 1fr;
 }
 
-.entity-review header {
+.profile-panel header,
+.learning-panel header,
+.entity-review header,
+.video-library header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
 }
 
-.entity-review header button {
+.profile-panel header button,
+.learning-panel header button,
+.entity-review header button,
+.video-library header button {
   height: 30px;
   padding: 0 12px;
   font-size: 12px;
+}
+
+.profile-content {
+  overflow: auto;
+  padding: 12px;
+}
+
+.learning-content {
+  overflow: auto;
+  padding: 12px;
+}
+
+.profile-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 10px;
+  padding: 10px;
+  background: #fff;
+}
+
+.learning-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 10px;
+  padding: 10px;
+  background: #fff;
+}
+
+.learning-card h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.learning-card p {
+  margin: 0;
+  color: #2d333b;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.learning-row {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 7px;
+  margin-top: 7px;
+  font-size: 13px;
+}
+
+.learning-row strong {
+  color: var(--accent-strong);
+}
+
+.learning-row span {
+  color: var(--muted);
+}
+
+.learning-actions-head {
+  display: flex;
+  gap: 8px;
+}
+
+.profile-card h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.profile-card p {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.profile-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.profile-row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 7px;
+  margin-top: 7px;
+  font-size: 13px;
+}
+
+.profile-row strong {
+  color: var(--accent-strong);
+}
+
+.profile-row span {
+  color: var(--muted);
 }
 
 .entity-candidates {
@@ -444,6 +638,79 @@ button:disabled {
 
 .entity-actions button + button {
   color: var(--muted);
+}
+
+.video-library {
+  min-height: 0;
+  border-top: 1px solid var(--line);
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.video-actions-head {
+  display: flex;
+  gap: 8px;
+}
+
+.video-items {
+  overflow: auto;
+  padding: 12px;
+}
+
+.video-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 10px;
+  padding: 10px;
+  background: #fff;
+}
+
+.video-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.video-card-head div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.video-card-head strong {
+  font-size: 13px;
+}
+
+.video-card-head span,
+.video-missing {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.video-card video {
+  width: 100%;
+  max-height: 240px;
+  margin-top: 8px;
+  background: #000;
+  border-radius: 6px;
+}
+
+.video-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.video-card-actions button {
+  height: 26px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--none);
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 @media (max-width: 900px) {

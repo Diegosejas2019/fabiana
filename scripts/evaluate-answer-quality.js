@@ -7,6 +7,8 @@ const defaultCasesPath = join(root, "quality/eval-cases.json");
 const casesPath = resolve(process.argv[2] ?? defaultCasesPath);
 const pythonPath = join(root, ".venv/Scripts/python.exe");
 const answerScript = join(root, "scripts/answer-memory.py");
+const combinedChunksV2Path = join(root, "data/processed/combined-memory-v2/chunks.jsonl");
+const combinedIndexV2Dir = join(root, "data/processed/combined-rag-v2");
 const combinedChunksPath = join(root, "data/processed/combined-memory/chunks.jsonl");
 const combinedIndexDir = join(root, "data/processed/combined-rag");
 const fallbackChunksPath = join(root, "data/processed/memory/chunks.jsonl");
@@ -16,8 +18,9 @@ const deepProfilePath = join(root, "data/processed/persona/deep-profile.json");
 const outputDir = join(root, "data/processed/evaluations");
 
 function main() {
-  const chunksPath = existsSync(combinedChunksPath) ? combinedChunksPath : fallbackChunksPath;
-  const indexDir = existsSync(combinedIndexDir) ? combinedIndexDir : fallbackIndexDir;
+  const hasV2 = existsSync(combinedChunksV2Path) && existsSync(join(combinedIndexV2Dir, "embeddings.npy"));
+  const chunksPath = hasV2 ? combinedChunksV2Path : existsSync(combinedChunksPath) ? combinedChunksPath : fallbackChunksPath;
+  const indexDir = hasV2 ? combinedIndexV2Dir : existsSync(combinedIndexDir) ? combinedIndexDir : fallbackIndexDir;
 
   if (!existsSync(casesPath)) {
     fail(`No existe el archivo de casos: ${casesPath}`);
@@ -72,6 +75,9 @@ function runCase(testCase, chunksPath, indexDir) {
 
   if (testCase.sourceType) {
     args.push("--source-type", testCase.sourceType);
+  }
+  if (testCase.responseMode) {
+    args.push("--response-mode", testCase.responseMode);
   }
   if (existsSync(styleProfilePath)) {
     args.push("--style-profile", styleProfilePath);
@@ -134,6 +140,17 @@ function checkExpectations(answer, expect) {
   }
   if (expect.validationStatusIn && !expect.validationStatusIn.includes(answer.validation?.status)) {
     errors.push(`validacion esperada: ${expect.validationStatusIn.join(", ")}; recibida: ${answer.validation?.status ?? "sin-validacion"}`);
+  }
+  if (expect.intentKindIn && !expect.intentKindIn.includes(answer.intent?.kind)) {
+    errors.push(`intencion esperada: ${expect.intentKindIn.join(", ")}; recibida: ${answer.intent?.kind ?? "sin-intencion"}`);
+  }
+  if (expect.sourceTypeIncludes) {
+    const sourceTypes = new Set((answer.sources ?? []).map((source) => source.sourceType));
+    for (const sourceType of expect.sourceTypeIncludes) {
+      if (!sourceTypes.has(sourceType)) {
+        errors.push(`no recupero fuente de tipo: "${sourceType}"`);
+      }
+    }
   }
 
   for (const text of expect.replyIncludes ?? []) {
